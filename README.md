@@ -1,11 +1,21 @@
+<p align="center">
+  <img src="docs/img/logo.png" alt="Hotspot Arcade — M5 Cardputer Edition" width="600">
+</p>
+
 # Hotspot Arcade — M5Stack Cardputer
 
+[![build](https://github.com/genkigenki/hotspot-arcade-cardputer/actions/workflows/build.yml/badge.svg)](https://github.com/genkigenki/hotspot-arcade-cardputer/actions/workflows/build.yml)
+[![latest release](https://img.shields.io/github/v/release/genkigenki/hotspot-arcade-cardputer?sort=semver)](https://github.com/genkigenki/hotspot-arcade-cardputer/releases/latest)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Ten party games your guests play from their phones. The Cardputer opens a WiFi
 access point and a captive portal, everyone joins and plays in the browser — no app
 to install — and the Cardputer's own screen is the host: lobby, game picker,
 scoreboard, event log.
+
+<p align="center">
+  <img src="docs/img/photo-2.jpg" alt="Cardputer hosting a round while a phone votes on a Would You Rather pack" width="820">
+</p>
 
 This is a **host port** of [tarikbc/hotspot-arcade](https://github.com/tarikbc/hotspot-arcade),
 which runs the same games as a Flipper Zero app driving a separate ESP32 board over
@@ -63,6 +73,13 @@ backlight for a party. Use the 1400mAh base or stay on USB.
 
 The AP comes up at boot; there is no start step. Phones join **Hotspot Arcade** (open)
 and land on `http://192.168.4.1`.
+
+<p align="center">
+  <img src="docs/img/photo-1.jpg" alt="The Cardputer dashboard: SSID, AP state, active game, player count and key hints" width="700">
+</p>
+
+The dashboard is the host view: SSID and IP, whether the AP is up, the active game,
+the live scoreboard, and the last event. Everything else is one key away.
 
 | key | |
 | --- | --- |
