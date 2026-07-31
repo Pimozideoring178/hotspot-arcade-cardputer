@@ -13,3 +13,6 @@ hotspot-arcade-cardputer/ha_games.h
 # OS
 .DS_Store
 Thumbs.db
+
+# junk from a crashed tool
+*.stackdump

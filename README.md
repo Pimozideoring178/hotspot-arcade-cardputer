@@ -18,32 +18,26 @@ scoreboard, event log.
 </p>
 
 This is a **host port** of [tarikbc/hotspot-arcade](https://github.com/tarikbc/hotspot-arcade),
-which runs the same games as a Flipper Zero app driving a separate ESP32 board over
-UART. Here the whole thing collapses onto one device. The game engine, the phone
-client and the content packs are upstream's, used unmodified. What is new here is the
-host: the on-device UI, the state mirror it draws from, and the pipeline that bakes
-the assets into flash.
+which runs the same games as a Flipper Zero app.
 
-If you have a Flipper, use upstream — it is the original and it is excellent. This
-repo is for people who have a Cardputer and no Flipper.
+If you have a Flipper, use upstream — it is the original and it is excellent.
 
 ## Install
 
-Two routes, and the difference matters.
+**Easiest install** (Recommended): The app is in the "M5Burner" catalog and in "Launcher's" catalog. Search for "Hotspot Arcade".
 
-**Keep M5Launcher** (recommended). The Cardputer's stock M5Launcher layout puts
+**Manual install**: Flash by hand to 0x170000: 
+```bash
+esptool --chip esp32s3 --port COM7 --baud 921600 write_flash 0x170000 hotspot-arcade-cardputer.ino.bin
+```
+or you can drop the `.bin` on the microSD and launch it from the launcher.
+
+The Cardputer's stock M5Launcher layout puts
 loaded apps in `ota_0` at `0x170000` and keeps the launcher itself in the test
 partition. Writing only the app image leaves the launcher untouched — you still get
 back into it the usual way, by holding the button at boot.
 
-```bash
-esptool --chip esp32s3 --port COM7 --baud 921600 write_flash 0x170000 hotspot-arcade-cardputer.ino.bin
-```
-
-Whatever app was in `ota_0` gets replaced. You can also drop the same `.bin` on the
-microSD and launch it from the launcher — same slot, same result, no PC.
-
-**Full install** (replaces everything, launcher included — recovery is M5Burner):
+**Full install** (replaces everything, launcher included):
 
 ```bash
 esptool --chip esp32s3 --port COM7 --baud 921600 write_flash 0x0 hotspot-arcade-cardputer.full.bin
@@ -53,9 +47,7 @@ Replace `COM7` with your port (`/dev/ttyACM0`, `/dev/cu.usbmodem*`). `esptool` c
 with the esp32 core, or `pip install esptool`. If the board does not enter download
 mode by itself, hold **G0** on the StampS3 while plugging in USB-C.
 
-Both images are on the [releases page](../../releases). The full image is trimmed of
-its erase-state padding, so it is ~1.3MB rather than the 8MB arduino-cli emits — it
-flashes identically. See [Distribution](#distribution) for the catalog routes.
+Both images are on the [releases page](../../releases). 
 
 ## Hardware
 
@@ -65,15 +57,13 @@ a 3.3MB app slot and ~78KB of static RAM, leaving ~250KB free at runtime.
 Not tested on the Cardputer ADV. It should build, but the ADV has a different
 keyboard controller (TCA8418) and antenna, so treat it as unverified.
 
-Two practical limits, both inherited from the hardware: the v1's antenna is its known
-weak spot — eight phones in a room is fine, range is worse than a dev board with an
-external antenna — and the 120mAh internal cell will not carry an access point plus
-backlight for a party. Use the 1400mAh base or stay on USB.
+Limit: the v1's antenna is weak — eight phones in a room is fine, range is worse than a dev board with an
+external antenna. 
 
 ## Using it
 
 The AP comes up at boot; there is no start step. Phones join **Hotspot Arcade** (open)
-and land on `http://192.168.4.1`.
+and land on `http://192.168.4.1` (if not automatically getting there via captive portal)
 
 <p align="center">
   <img src="docs/img/photo-1.jpg" alt="The Cardputer dashboard: SSID, AP state, active game, player count and key hints" width="700">
@@ -128,13 +118,10 @@ this firmware does not fit in.
 | game engine | `esp32/hotspot-arcade-fw/ha_games.h` | the same file, unmodified |
 | phone client | streamed over UART at session start | baked into flash |
 | content packs | read off the Flipper's SD, streamed | baked into flash |
-| host reports | UART v2 frames (`docs/PROTOCOL.md`) | the same six sinks, called in-process |
+| host reports | UART v2 frames (`docs/PROTOCOL.md`) | same, but simply called in-process |
 | host UI | Flipper scenes, 128×64 mono | `ha_ui.h`, 240×135 colour + keyboard |
 
-The engine reaches its host through six sink functions. Upstream implements them by
-framing UART bytes; this port implements them as direct calls into a local mirror.
-That is the whole trick — the protocol is unchanged in shape, only its transport is
-gone, and `docs/PROTOCOL.md` upstream still describes what flows.
+The engine reaches its host through six sink functions. This port implements them as direct calls into a local mirror.
 
 New code lives in four files under `hotspot-arcade-cardputer/`:
 
@@ -147,7 +134,7 @@ New code lives in four files under `hotspot-arcade-cardputer/`:
 
 ## Staying in sync
 
-**The rule: nothing under `vendor/` is ever edited here.** Everything in it is
+**The rule: nothing under `vendor/` is edited here.** Everything in it is
 upstream's, copied verbatim, with the exact commit pinned in [UPSTREAM.md](UPSTREAM.md).
 Want a game changed? Change it upstream — then both projects get it.
 
@@ -164,25 +151,12 @@ resolve — those copies are generated and carry a banner saying so.
 ## Distribution
 
 - **Releases** — the app image and the trimmed full image, on every tag.
-- **M5Burner** — publish from the M5Burner desktop app: log in with an M5Stack
-  community account, **USER CUSTOM → Publish**, upload `hotspot-arcade-cardputer.full.bin`.
-  (The old route via [m5stack/M5Stack-Firmware](https://github.com/m5stack/M5Stack-Firmware)
-  — fork, `firmware-repo.list`, PR — is dead: that repo has been archived since 2019.)
-- **M5Launcher / LauncherHub** — open an issue on
-  [bmorcelli/Launcher](https://github.com/bmorcelli/Launcher) asking to be added to
-  the catalog. Per the maintainer, anything published to M5Burner is **mirrored into
-  LauncherHub automatically**, while a direct back-end entry does not appear in
-  M5Burner — so M5Burner is the one to do first. Launcher wants a `.bin` in the
-  release assets (not a `.zip`) and prefers the merged image.
+- **M5Burner** — published to M5Burner
+- **M5Launcher / LauncherHub** — added to the catalog. 
 
 ## Status
 
-Runs on real hardware: AP, captive portal, phones playing, host UI and keyboard all
-confirmed on a Cardputer v1. The content-pack parser is additionally checked
-off-target against the real engine (trivia topics, options and answer index; a
-drawing round pulling a word from a pack).
-
-Unverified: the Cardputer ADV, and long sessions with a full eight phones.
+Unverified: the Cardputer ADV, and long sessions with many many phones.
 
 ## License
 

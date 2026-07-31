@@ -2,7 +2,7 @@
 
 Everything under `vendor/` is copied verbatim from
 [tarikbc/hotspot-arcade](https://github.com/tarikbc/hotspot-arcade) (MIT,
-(c) 2026 Tarik Caramanico). Nothing in `vendor/` is edited here -- see README.
+Tarik Caramanico). Nothing in `vendor/` is edited here -- see README.
 
 | | |
 | --- | --- |
