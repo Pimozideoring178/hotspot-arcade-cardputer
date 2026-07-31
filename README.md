@@ -46,7 +46,7 @@ microSD and launch it from the launcher — same slot, same result, no PC.
 **Full install** (replaces everything, launcher included — recovery is M5Burner):
 
 ```bash
-esptool --chip esp32s3 --port COM7 --baud 921600 write_flash 0x0 hotspot-arcade-cardputer.ino.merged.bin
+esptool --chip esp32s3 --port COM7 --baud 921600 write_flash 0x0 hotspot-arcade-cardputer.full.bin
 ```
 
 Replace `COM7` with your port (`/dev/ttyACM0`, `/dev/cu.usbmodem*`). `esptool` comes

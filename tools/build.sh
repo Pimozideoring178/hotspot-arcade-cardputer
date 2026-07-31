@@ -32,6 +32,10 @@ arduino-cli compile \
 # Strip the debug artefacts; they are 60MB+ and nobody flashes them.
 rm -f build/*.elf build/*.map
 
+node tools/trim-merged.mjs \
+  build/hotspot-arcade-cardputer.ino.merged.bin \
+  build/hotspot-arcade-cardputer.full.bin
+
 echo
 echo "app image  (keeps M5Launcher, flash to 0x170000) : build/hotspot-arcade-cardputer.ino.bin"
-echo "full image (replaces everything, flash to 0x0)   : build/hotspot-arcade-cardputer.ino.merged.bin"
+echo "full image (replaces everything, flash to 0x0)   : build/hotspot-arcade-cardputer.full.bin"
