@@ -1,0 +1,72 @@
+name: build
+
+# Every push and PR compiles the firmware. A version tag (v*) also publishes a
+# release with both install images and the M5Burner layout.
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install arduino-cli
+        run: |
+          mkdir -p "$HOME/bin"
+          curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | BINDIR="$HOME/bin" sh
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Install core + libraries
+        run: |
+          arduino-cli config init --overwrite
+          arduino-cli config set board_manager.additional_urls \
+            https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+          arduino-cli core update-index
+          # 3.x: vendor/libs holds the 3.x-compatible AsyncTCP/ESPAsyncWebServer copies.
+          arduino-cli core install esp32:esp32@3.3.11
+          arduino-cli lib install M5Cardputer
+
+      - name: Build
+        run: |
+          chmod +x tools/*.sh
+          tools/build.sh
+
+      - name: Package for M5Burner
+        run: tools/package-m5burner.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hotspot-arcade-cardputer
+          path: |
+            build/hotspot-arcade-cardputer.ino.bin
+            build/hotspot-arcade-cardputer.ino.merged.bin
+            firmware/cardputer/
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            build/hotspot-arcade-cardputer.ino.bin
+            build/hotspot-arcade-cardputer.ino.merged.bin
+          body: |
+            **Keep M5Launcher** — flash the app image to `0x170000`:
+            ```
+            esptool --chip esp32s3 --port <PORT> --baud 921600 write_flash 0x170000 hotspot-arcade-cardputer.ino.bin
+            ```
+            **Full install** — replaces everything, launcher included:
+            ```
+            esptool --chip esp32s3 --port <PORT> --baud 921600 write_flash 0x0 hotspot-arcade-cardputer.ino.merged.bin
+            ```
+            Cardputer v1 (StampS3, 8MB). See the README for the difference and for recovery.

@@ -1,0 +1,15 @@
+# arduino-cli output
+build/
+
+# M5Burner package (generated from build/ by tools/package-m5burner.sh)
+firmware/
+
+# generated into the sketch folder by tools/gen-assets.mjs -- regenerate, don't commit
+hotspot-arcade-cardputer/ha_bundle.h
+hotspot-arcade-cardputer/ha_proto.h
+hotspot-arcade-cardputer/ha_json.h
+hotspot-arcade-cardputer/ha_games.h
+
+# OS
+.DS_Store
+Thumbs.db
