@@ -53,8 +53,9 @@ Replace `COM7` with your port (`/dev/ttyACM0`, `/dev/cu.usbmodem*`). `esptool` c
 with the esp32 core, or `pip install esptool`. If the board does not enter download
 mode by itself, hold **G0** on the StampS3 while plugging in USB-C.
 
-Both images are on the [releases page](../../releases). The repo is also laid out for
-M5Burner (`m5burner.json` + `firmware/`); see [Distribution](#distribution).
+Both images are on the [releases page](../../releases). The full image is trimmed of
+its erase-state padding, so it is ~1.3MB rather than the 8MB arduino-cli emits — it
+flashes identically. See [Distribution](#distribution) for the catalog routes.
 
 ## Hardware
 
@@ -162,14 +163,17 @@ resolve — those copies are generated and carry a banner saying so.
 
 ## Distribution
 
-- **Releases** — the app image and the full image, on every tag.
-- **M5Burner** — `m5burner.json` and `tools/package-m5burner.sh` produce the layout
-  [m5stack/M5Stack-Firmware](https://github.com/m5stack/M5Stack-Firmware) wants
-  (`firmware/cardputer/<name>_<address>.bin`). Getting listed means forking that
-  repo, adding this repo's URL to `firmware-repo.list`, and opening a PR; after
-  that, M5Burner picks up new releases on its own. Note this is the **full** install.
-- **M5Launcher / LauncherHub** has no documented submission process — it is a word
-  with the maintainer, not a PR.
+- **Releases** — the app image and the trimmed full image, on every tag.
+- **M5Burner** — publish from the M5Burner desktop app: log in with an M5Stack
+  community account, **USER CUSTOM → Publish**, upload `hotspot-arcade-cardputer.full.bin`.
+  (The old route via [m5stack/M5Stack-Firmware](https://github.com/m5stack/M5Stack-Firmware)
+  — fork, `firmware-repo.list`, PR — is dead: that repo has been archived since 2019.)
+- **M5Launcher / LauncherHub** — open an issue on
+  [bmorcelli/Launcher](https://github.com/bmorcelli/Launcher) asking to be added to
+  the catalog. Per the maintainer, anything published to M5Burner is **mirrored into
+  LauncherHub automatically**, while a direct back-end entry does not appear in
+  M5Burner — so M5Burner is the one to do first. Launcher wants a `.bin` in the
+  release assets (not a `.zip`) and prefers the merged image.
 
 ## Status
 
