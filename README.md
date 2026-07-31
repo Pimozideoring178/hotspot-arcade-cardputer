@@ -98,6 +98,10 @@ Games: trivia, would-you-rather, word scramble, reaction duel, connect four,
 tic-tac-toe, dots & boxes, reversi, drawing, pong. All of them are phone-driven; the
 host picks which one is live and watches.
 
+<p align="center">
+  <img src="docs/img/photo-3.jpg" alt="The game picker with all ten games; the active one is marked" width="700">
+</p>
+
 ## Build
 
 Needs `node` and `arduino-cli`.
