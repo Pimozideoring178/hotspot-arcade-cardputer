@@ -33,6 +33,15 @@ static inline void ha_upper(char* s) {
 #define DOTS_VEDGES (DOTS_H * (DOTS_W + 1)) // vertical edges
 #define DOTS_BOXES (DOTS_W * DOTS_H)
 
+// Battleship: 1v1 on a 10x10 grid, five ships (5+4+3+3+2 = 17 cells). Its own match
+// struct (like Pong), not the shared DuelMatch board, because it needs two grids per
+// player and hidden fleets.
+#define BS_SIZE 10
+#define BS_N (BS_SIZE * BS_SIZE) // 100
+#define BS_SHIPS 5
+#define BS_TOTAL 17 // sum of BS_LEN, the win threshold
+#define BATTLE_MAX 4 // concurrent matches
+
 #define TRIVIA_MAX_TOPICS 6
 #define TRIVIA_MAX_QS 20
 #define PACK_MAX_ITEMS 32 // items in a word/prompt pack (wyr/scramble/draw)
@@ -66,6 +75,21 @@ static inline void ha_upper(char* s) {
 #define SCR_REVEAL_MS 5000
 #define REACT_ROUNDS 5
 #define REACT_REVEAL_MS 4000
+
+// Spectrum (wavelength-style): each round one player is the psychic. They see a
+// hidden target on a 0..100 spectrum between two opposing words and type a clue;
+// everyone else slides to guess where the clue lands. Points by closeness; the
+// psychic scores by how well the guessers do, so a good clue is rewarded.
+#define SPECTRUM_ROUNDS 6
+#define SPECTRUM_CLUE_SECS 45 // psychic's clue window (safety timer)
+#define SPECTRUM_GUESS_SECS 30 // guessers' window (safety timer)
+#define SPECTRUM_REVEAL_MS 6000
+#define SPECTRUM_CLUE_LEN 40
+
+#define GC_ROUNDS 5
+#define GC_PLAY_SECS 25 // safety deadline per color
+#define GC_REVEAL_MS 6000
+#define GC_SPEED_MS 12000 // speed bonus decays to 0 over this window
 
 // ---- sinks implemented in the .ino ----
 void haWsSendWs(uint32_t wsId, const String& msg); // to one socket (0 = no-op)
@@ -218,6 +242,40 @@ struct ReactState {
     uint32_t winMs; // winner's reaction time
 };
 
+// Guess the Color: a random swatch is shown; everyone dials in an R/G/B guess and
+// submits. Points = closeness (Euclidean RGB distance) + a speed bonus that decays
+// the longer you take. Closest usually wins the round; a fast submit can edge it.
+struct GuessColorState {
+    Party pt;
+    uint8_t tr, tg, tb; // target color for the round
+    uint32_t roundStart; // millis the play phase began (for speed)
+    bool guessed[HA_MAX_PLAYERS + 1];
+    uint8_t gr[HA_MAX_PLAYERS + 1], gg[HA_MAX_PLAYERS + 1], gb[HA_MAX_PLAYERS + 1];
+    uint32_t submitMs[HA_MAX_PLAYERS + 1]; // reveal -> submit, ms
+    int gained[HA_MAX_PLAYERS + 1]; // points earned this round
+    uint8_t winner; // pid with the most points this round, 0 = none
+};
+
+// Spectrum: reuses WyrPack for content (each item's a=left label, b=right label)
+// and the Party lobby/countdown/reveal skeleton. Within a playing round it has two
+// stages: 0 = the psychic is writing the clue, 1 = everyone else is guessing.
+struct SpectrumState {
+    Party pt;
+    WyrPack packs[TRIVIA_MAX_TOPICS]; // item.a = left word, item.b = right word
+    uint8_t packCount;
+    int8_t vote[HA_MAX_PLAYERS + 1]; // pack index, -1 = not voted
+    uint8_t pack; // chosen pack (locked when the game starts)
+    uint16_t cardSeq; // rotates the spectrum card across rounds
+    uint8_t card; // current card index within the pack
+    uint8_t psychic; // pid giving the clue this round
+    uint8_t psychicSeq; // rotates the psychic across rounds
+    uint8_t stage; // 0 clue, 1 guess
+    int target; // hidden target 0..100
+    char clue[SPECTRUM_CLUE_LEN]; // psychic's clue text
+    int8_t guess[HA_MAX_PLAYERS + 1]; // 0..100, -1 = not guessed
+    int gained[HA_MAX_PLAYERS + 1]; // points earned this round (shown on reveal)
+};
+
 struct PongMatch {
     bool used;
     uint8_t a, b; // a = left paddle, b = right paddle
@@ -229,6 +287,26 @@ struct PongMatch {
     uint8_t s1, s2; // scores
     uint8_t winner; // pid
 };
+
+// Battleship: a = challenger, b = opponent. Each keeps a hidden fleet grid; shots are
+// recorded on the *target's* grid. battleJson never exposes an un-hit enemy ship cell.
+struct BattleMatch {
+    bool used;
+    uint8_t a, b; // pids
+    bool aIn, bIn;
+    uint8_t phase; // 0 placement, 1 firing, 2 over
+    uint8_t turn; // pid to fire (firing phase)
+    uint8_t first; // who fired first (rematch alternates it)
+    uint8_t winner; // pid, or 0
+    bool readyA, readyB; // placement committed
+    uint8_t fleetA[BS_N], fleetB[BS_N]; // 0 empty, else ship id 1..BS_SHIPS
+    uint8_t shotOnA[BS_N], shotOnB[BS_N]; // shots landed on that grid: 0 none, 1 miss, 2 hit
+    uint8_t hitsA, hitsB; // hits scored BY a / BY b (win at BS_TOTAL)
+};
+
+static const uint8_t BS_LEN[BS_SHIPS] = {5, 4, 3, 3, 2};
+static const char* const BS_NAMES[BS_SHIPS] = {
+    "Carrier", "Battleship", "Cruiser", "Submarine", "Destroyer"};
 
 class Engine {
 public:
@@ -242,6 +320,9 @@ public:
         wyrClear();
         scrambleClear();
         reactClear();
+        gcClear();
+        battleClear();
+        spectrumClear();
     }
 
     // ---- roster ----
@@ -304,6 +385,7 @@ public:
         wyrClear();
         scrambleClear();
         reactClear();
+        spectrumClear();
         pushAll();
     }
 
@@ -354,6 +436,8 @@ public:
         _scr.packCount = 0;
         for(int i = 0; i < TRIVIA_MAX_TOPICS; i++) _d.packs[i] = WordPack{};
         _d.packCount = 0;
+        for(int i = 0; i < TRIVIA_MAX_TOPICS; i++) _spec.packs[i] = WyrPack{};
+        _spec.packCount = 0;
         _packGame = 0;
     }
 
@@ -379,6 +463,12 @@ public:
                 _d.packs[_d.packCount].name = name;
                 _d.packCount++;
             }
+        } else if(game == HA_GAME_SPECTRUM) {
+            if(_spec.packCount < TRIVIA_MAX_TOPICS) {
+                _spec.packs[_spec.packCount] = WyrPack{};
+                _spec.packs[_spec.packCount].name = name;
+                _spec.packCount++;
+            }
         }
     }
 
@@ -388,6 +478,7 @@ public:
         else if(_packGame == HA_GAME_WYR) wyrLoadItem(json);
         else if(_packGame == HA_GAME_SCRAMBLE) scrambleLoadItem(json);
         else if(_packGame == HA_GAME_DRAW) drawLoadItem(json);
+        else if(_packGame == HA_GAME_SPECTRUM) spectrumLoadItem(json);
         // Unknown game ids are dropped on purpose: a newer Flipper must not be able
         // to corrupt an older board's state.
     }
@@ -439,6 +530,22 @@ public:
         return true;
     }
 
+    // Map a spectrum pack file's {left,right} keys into the current pack, reusing
+    // WyrPrompt (a = left label, b = right label).
+    bool spectrumLoadItem(const char* json) {
+        if(_spec.packCount == 0) return false;
+        WyrPack& p = _spec.packs[_spec.packCount - 1];
+        if(p.count >= PACK_MAX_ITEMS) return false;
+        char buf[128];
+        if(!ha_json_str(json, "left", buf, sizeof(buf)) || !buf[0]) return false;
+        String left = buf;
+        if(!ha_json_str(json, "right", buf, sizeof(buf)) || !buf[0]) return false;
+        p.items[p.count].a = left;
+        p.items[p.count].b = buf;
+        p.count++;
+        return true;
+    }
+
     // Map a scramble pack file's {word} key into the current pack.
     bool scrambleLoadItem(const char* json) {
         if(_scr.packCount == 0) return false;
@@ -476,6 +583,12 @@ public:
             scrambleClear();
         else if(_active == HA_GAME_REACT)
             reactClear();
+        else if(_active == HA_GAME_GUESSCOLOR)
+            gcClear();
+        else if(_active == HA_GAME_BATTLESHIP)
+            battleClear();
+        else if(_active == HA_GAME_SPECTRUM)
+            spectrumClear();
         pushAll();
     }
 
@@ -494,6 +607,10 @@ public:
             scrambleTick(now);
         else if(_active == HA_GAME_REACT)
             reactTick(now);
+        else if(_active == HA_GAME_GUESSCOLOR)
+            gcTick(now);
+        else if(_active == HA_GAME_SPECTRUM)
+            spectrumTick(now);
     }
 
     // ---- player input (parsed WS JSON) ----
@@ -529,19 +646,29 @@ public:
             wyrReady(pid, r);
             scrambleReady(pid, r);
             reactReady(pid, r);
+            gcReady(pid, r);
+            spectrumReady(pid, r);
         } else if(strcmp(type, "vote") == 0 && ha_json_int(json, "topic", &v)) {
             triviaVote(pid, v);
         } else if(strcmp(type, "vote") == 0 && ha_json_int(json, "pack", &v)) {
             wyrVote(pid, v);
             scrambleVote(pid, v);
+            spectrumVote(pid, v);
         } else if(strcmp(type, "tap") == 0) {
             reactTap(pid);
+        } else if(strcmp(type, "clue") == 0) {
+            char c[SPECTRUM_CLUE_LEN];
+            if(ha_json_str(json, "text", c, sizeof(c))) spectrumClue(pid, c);
+        } else if(strcmp(type, "slide") == 0 && ha_json_int(json, "n", &v)) {
+            spectrumGuess(pid, v);
         } else if(strcmp(type, "again") == 0) {
             triviaAgain(pid);
             drawAgain(pid);
             wyrAgain(pid);
             scrambleAgain(pid);
             reactAgain(pid);
+            gcAgain(pid);
+            spectrumAgain(pid);
         } else if(strcmp(type, "say") == 0) {
             char t[120];
             if(ha_json_str(json, "text", t, sizeof(t))) onSay(pid, t);
@@ -555,13 +682,24 @@ public:
             duelMove(pid, v);
         } else if(strcmp(type, "rematch") == 0) {
             duelRematch(pid);
+            battleRematch(pid);
         } else if(strcmp(type, "paddle") == 0 && ha_json_int(json, "dir", &v)) {
             pongPaddle(pid, v);
+        } else if(strcmp(type, "place") == 0) {
+            battlePlace(pid, json);
+        } else if(strcmp(type, "fire") == 0 && ha_json_int(json, "n", &v)) {
+            battleFire(pid, v);
         } else if(strcmp(type, "guess") == 0) {
+            // A text guess (draw/scramble) or an r/g/b color guess (guess the color).
             char g[64];
+            int r, gg, b;
             if(ha_json_str(json, "text", g, sizeof(g))) {
                 drawGuess(pid, g);
                 scrambleGuess(pid, g);
+            } else if(
+                ha_json_int(json, "r", &r) && ha_json_int(json, "g", &gg) &&
+                ha_json_int(json, "b", &b)) {
+                gcGuess(pid, r, gg, b);
             }
         } else if(strcmp(type, "stroke") == 0) {
             drawStroke(pid, json);
@@ -588,6 +726,9 @@ private:
     WyrState _wyr = {};
     ScrambleState _scr = {};
     ReactState _react = {};
+    GuessColorState _gc = {};
+    BattleMatch _bm[BATTLE_MAX] = {};
+    SpectrumState _spec = {};
 
     uint8_t freePid() {
         for(uint8_t i = 1; i <= HA_MAX_PLAYERS; i++)
@@ -621,6 +762,12 @@ private:
                 haWsSendWs(_p[pid].wsId, scrambleJson(pid));
             else if(_active == HA_GAME_REACT)
                 haWsSendWs(_p[pid].wsId, reactJson(pid));
+            else if(_active == HA_GAME_GUESSCOLOR)
+                haWsSendWs(_p[pid].wsId, gcJson(pid));
+            else if(_active == HA_GAME_BATTLESHIP)
+                haWsSendWs(_p[pid].wsId, battleJson(pid));
+            else if(_active == HA_GAME_SPECTRUM)
+                haWsSendWs(_p[pid].wsId, spectrumJson(pid));
         }
     }
 
@@ -671,6 +818,12 @@ private:
             return "scramble";
         case HA_GAME_REVERSI:
             return "reversi";
+        case HA_GAME_GUESSCOLOR:
+            return "gc";
+        case HA_GAME_BATTLESHIP:
+            return "bs";
+        case HA_GAME_SPECTRUM:
+            return "spectrum";
         default:
             return "none";
         }
@@ -1056,9 +1209,13 @@ private:
             if(_c[i].used && (_c[i].from == pid || _c[i].to == pid)) _c[i] = DuelChallenge{};
     }
 
-    // Challenge/accept are shared by all 1v1 games (duels + pong).
-    bool isMatchGame() { return isDuel(_active) || _active == HA_GAME_PONG; }
-    bool inAnyMatch(uint8_t pid) { return matchOf(pid) || pongMatchOf(pid); }
+    // Challenge/accept are shared by all 1v1 games (duels + pong + battleship).
+    bool isMatchGame() {
+        return isDuel(_active) || _active == HA_GAME_PONG || _active == HA_GAME_BATTLESHIP;
+    }
+    bool inAnyMatch(uint8_t pid) {
+        return matchOf(pid) || pongMatchOf(pid) || battleMatchOf(pid);
+    }
 
     void matchChallenge(uint8_t from, uint8_t to) {
         if(!isMatchGame()) return;
@@ -1116,6 +1273,12 @@ private:
                     pongStart(&_pm[i], from, pid);
                     break;
                 }
+        } else if(_active == HA_GAME_BATTLESHIP) {
+            for(int i = 0; i < BATTLE_MAX; i++)
+                if(!_bm[i].used) {
+                    battleStart(&_bm[i], from, pid, from); // challenger fires first
+                    break;
+                }
         } else {
             for(int i = 0; i < DUEL_MAX_MATCHES; i++)
                 if(!_m[i].used) {
@@ -1125,7 +1288,9 @@ private:
         }
         duelRemoveChallengesInvolving(pid);
         duelRemoveChallengesInvolving(from);
-        const char* key = (_active == HA_GAME_PONG) ? "pong" : "duel";
+        const char* key = (_active == HA_GAME_PONG)      ? "pong" :
+                          (_active == HA_GAME_BATTLESHIP) ? "bs" :
+                                                            "duel";
         haUartEvent(
             String("{\"") + key + "\":\"" + ha_json_escape(_p[from].nick) + " vs " +
             ha_json_escape(_p[pid].nick) + "\"}");
@@ -1135,6 +1300,7 @@ private:
     void anyOnLeave(uint8_t pid) {
         duelOnLeave(pid);
         pongOnLeave(pid);
+        battleOnLeave(pid);
     }
 
     void duelCancel(uint8_t pid) {
@@ -1530,6 +1696,7 @@ private:
                      ha_json_escape(emoji) + "\"}";
         DuelMatch* dm = matchOf(pid);
         PongMatch* pm = dm ? nullptr : pongMatchOf(pid);
+        BattleMatch* bm = (dm || pm) ? nullptr : battleMatchOf(pid);
         for(uint8_t i = 1; i <= HA_MAX_PLAYERS; i++) {
             if(!_p[i].used || !_p[i].wsId) continue;
             bool peer;
@@ -1537,8 +1704,10 @@ private:
                 peer = (i == dm->a || i == dm->b);
             else if(pm)
                 peer = (i == pm->a || i == pm->b);
+            else if(bm)
+                peer = (i == bm->a || i == bm->b);
             else
-                peer = !inAnyMatch(i);
+                peer = !inAnyMatch(i); // lobby / whole-group: reaches everyone not in a match
             if(peer) haWsSendWs(_p[i].wsId, msg);
         }
     }
@@ -1961,6 +2130,10 @@ private:
             scrambleCheckStart();
         else if(_active == HA_GAME_REACT)
             reactCheckStart();
+        else if(_active == HA_GAME_GUESSCOLOR)
+            gcCheckStart();
+        else if(_active == HA_GAME_SPECTRUM)
+            spectrumCheckStart();
     }
 
     // ---------- would you rather (live A/B poll) ----------
@@ -2508,6 +2681,708 @@ private:
         }
         s += ",\"dq\":";
         s += _react.dq[pid] ? "true" : "false";
+        s += ",\"scores\":" + playersJson() + "}";
+        return s;
+    }
+
+    // ---------- guess the color (closest RGB + speed) ----------
+    void gcClear() {
+        partyClear(_gc.pt);
+        _gc.tr = _gc.tg = _gc.tb = 0;
+        _gc.roundStart = 0;
+        _gc.winner = 0;
+        for(int i = 0; i <= HA_MAX_PLAYERS; i++) {
+            _gc.guessed[i] = false;
+            _gc.gained[i] = 0;
+            _gc.submitMs[i] = 0;
+            _gc.gr[i] = _gc.gg[i] = _gc.gb[i] = 0;
+        }
+    }
+
+    void gcReady(uint8_t pid, bool val) {
+        if(_active != HA_GAME_GUESSCOLOR) return;
+        if(_gc.pt.phase != 0 && _gc.pt.phase != 4) return;
+        if(_gc.pt.phase == 4 && val) gcClear();
+        _gc.pt.ready[pid] = val;
+        gcCheckStart();
+        pushAll();
+    }
+
+    void gcCheckStart() {
+        Party& pt = _gc.pt;
+        if(pt.phase == 0 && partyAllReady(pt)) {
+            pt.phase = 1;
+            pt.countdownEnd = millis() + (uint32_t)PARTY_COUNTDOWN * 1000;
+            pt.lastSec = -1;
+        } else if(pt.phase == 1 && !partyAllReady(pt)) {
+            pt.phase = 0;
+        }
+    }
+
+    // Everyone present has submitted -> round is settled.
+    bool gcAllGuessed() {
+        int n = 0;
+        for(uint8_t i = 1; i <= HA_MAX_PLAYERS; i++) {
+            if(!_p[i].used) continue;
+            n++;
+            if(!_gc.guessed[i]) return false;
+        }
+        return n >= 1;
+    }
+
+    void gcStartRound(uint32_t now) {
+        Party& pt = _gc.pt;
+        if(pt.round >= GC_ROUNDS) {
+            pt.phase = 4;
+            haUartRoundResult("{\"gc\":\"final\"}");
+            pushAll();
+            return;
+        }
+        pt.round++;
+        _gc.tr = esp_random() % 256;
+        _gc.tg = esp_random() % 256;
+        _gc.tb = esp_random() % 256;
+        _gc.winner = 0;
+        for(int i = 0; i <= HA_MAX_PLAYERS; i++) {
+            _gc.guessed[i] = false;
+            _gc.gained[i] = 0;
+            _gc.submitMs[i] = 0;
+        }
+        _gc.roundStart = now;
+        pt.deadline = now + (uint32_t)GC_PLAY_SECS * 1000;
+        pt.phase = 2;
+        pushAll();
+    }
+
+    void gcGuess(uint8_t pid, int r, int g, int b) {
+        if(_active != HA_GAME_GUESSCOLOR || _gc.pt.phase != 2) return;
+        if(_gc.guessed[pid]) return;
+        if(r < 0) r = 0;
+        if(r > 255) r = 255;
+        if(g < 0) g = 0;
+        if(g > 255) g = 255;
+        if(b < 0) b = 0;
+        if(b > 255) b = 255;
+        _gc.gr[pid] = (uint8_t)r;
+        _gc.gg[pid] = (uint8_t)g;
+        _gc.gb[pid] = (uint8_t)b;
+        _gc.guessed[pid] = true;
+        uint32_t now = millis();
+        _gc.submitMs[pid] = (now >= _gc.roundStart) ? (now - _gc.roundStart) : 0;
+        if(gcAllGuessed()) gcReveal(now);
+        else pushAll();
+    }
+
+    void gcReveal(uint32_t now) {
+        _gc.winner = 0;
+        int bestPts = -1;
+        uint32_t bestMs = 0xFFFFFFFF;
+        for(uint8_t i = 1; i <= HA_MAX_PLAYERS; i++) {
+            if(!_p[i].used) continue;
+            if(!_gc.guessed[i]) {
+                _gc.gained[i] = 0;
+                continue;
+            }
+            int dr = (int)_gc.gr[i] - _gc.tr, dg = (int)_gc.gg[i] - _gc.tg,
+                db = (int)_gc.gb[i] - _gc.tb;
+            float dist = sqrtf((float)(dr * dr + dg * dg + db * db)); // 0..441.67
+            int closeness = (int)(200.0f * (1.0f - dist / 441.673f) + 0.5f);
+            if(closeness < 0) closeness = 0;
+            float sf = 1.0f - (float)_gc.submitMs[i] / (float)GC_SPEED_MS;
+            if(sf < 0) sf = 0;
+            int speed = (int)(100.0f * sf + 0.5f);
+            int pts = (int)((closeness + speed) / 30.0f + 0.5f); // rescale 0..300 -> 0..10
+            if(pts > 10) pts = 10;
+            _gc.gained[i] = pts;
+            _p[i].score += pts;
+            haUartScore(i, pts, "gc");
+            if(pts > bestPts || (pts == bestPts && _gc.submitMs[i] < bestMs)) {
+                bestPts = pts;
+                bestMs = _gc.submitMs[i];
+                _gc.winner = i;
+            }
+        }
+        _gc.pt.phase = 3;
+        _gc.pt.revealUntil = now + GC_REVEAL_MS;
+        pushAll();
+    }
+
+    void gcAgain(uint8_t pid) {
+        (void)pid;
+        if(_active != HA_GAME_GUESSCOLOR || _gc.pt.phase != 4) return;
+        gcClear();
+        pushAll();
+    }
+
+    void gcTick(uint32_t now) {
+        Party& pt = _gc.pt;
+        if(pt.phase == 1) {
+            if(partyCountdownDone(pt, now)) {
+                pt.round = 0;
+                resetScoresAll();
+                gcStartRound(now);
+            }
+        } else if(pt.phase == 2) {
+            if(now > pt.deadline) gcReveal(now);
+        } else if(pt.phase == 3) {
+            if(now > pt.revealUntil) gcStartRound(now);
+        }
+    }
+
+    String gcJson(uint8_t pid) {
+        Party& pt = _gc.pt;
+        if(pt.phase == 0)
+            return String("{\"t\":\"gc\",\"phase\":\"lobby\",\"you\":") + pid +
+                   ",\"players\":" + partyPlayersJson(pt) + "}";
+        if(pt.phase == 1)
+            return String("{\"t\":\"gc\",\"phase\":\"countdown\",\"sec\":") +
+                   partyCountdownSec(pt) + "}";
+        if(pt.phase == 4)
+            return String("{\"t\":\"gc\",\"phase\":\"final\",\"board\":") + triviaBoard() + "}";
+        char color[8];
+        snprintf(color, sizeof(color), "#%02X%02X%02X", _gc.tr, _gc.tg, _gc.tb);
+        if(pt.phase == 2)
+            return String("{\"t\":\"gc\",\"phase\":\"play\",\"round\":") + pt.round +
+                   ",\"rounds\":" + GC_ROUNDS + ",\"color\":\"" + color + "\",\"submitted\":" +
+                   (_gc.guessed[pid] ? "true" : "false") + ",\"scores\":" + playersJson() + "}";
+        // reveal
+        String s = String("{\"t\":\"gc\",\"phase\":\"reveal\",\"round\":") + pt.round +
+                   ",\"rounds\":" + GC_ROUNDS + ",\"r\":" + _gc.tr + ",\"g\":" + _gc.tg +
+                   ",\"b\":" + _gc.tb + ",\"color\":\"" + color + "\"";
+        // Every player's guess, so the reveal can compare them side by side.
+        s += ",\"guesses\":[";
+        bool gfirst = true;
+        for(uint8_t i = 1; i <= HA_MAX_PLAYERS; i++) {
+            if(!_p[i].used || !_gc.guessed[i]) continue;
+            int dr = (int)_gc.gr[i] - _gc.tr, dg = (int)_gc.gg[i] - _gc.tg,
+                db = (int)_gc.gb[i] - _gc.tb;
+            int dist = (int)(sqrtf((float)(dr * dr + dg * dg + db * db)) + 0.5f);
+            char gcol[8];
+            snprintf(gcol, sizeof(gcol), "#%02X%02X%02X", _gc.gr[i], _gc.gg[i], _gc.gb[i]);
+            if(!gfirst) s += ",";
+            s += "{\"pid\":" + String(i) + ",\"nick\":\"" + ha_json_escape(_p[i].nick) +
+                 "\",\"color\":\"" + gcol + "\",\"dist\":" + dist + ",\"points\":" + _gc.gained[i] + "}";
+            gfirst = false;
+        }
+        s += "]";
+        if(_gc.winner) {
+            s += ",\"winner\":\"";
+            s += ha_json_escape(_p[_gc.winner].nick);
+            s += "\",\"winnerPid\":";
+            s += _gc.winner;
+            s += ",\"iwon\":";
+            s += (_gc.winner == pid) ? "true" : "false";
+        } else {
+            s += ",\"winner\":null";
+        }
+        s += ",\"scores\":" + playersJson() + "}";
+        return s;
+    }
+
+    // ---------- battleship (1v1, hidden fleets) ----------
+    void battleClear() {
+        for(int i = 0; i < BATTLE_MAX; i++) _bm[i] = BattleMatch{};
+    }
+
+    BattleMatch* battleMatchOf(uint8_t pid) {
+        for(int i = 0; i < BATTLE_MAX; i++) {
+            if(!_bm[i].used) continue;
+            if(_bm[i].a == pid && _bm[i].aIn) return &_bm[i];
+            if(_bm[i].b == pid && _bm[i].bIn) return &_bm[i];
+        }
+        return nullptr;
+    }
+
+    void battleStart(BattleMatch* m, uint8_t a, uint8_t b, uint8_t first) {
+        *m = BattleMatch{};
+        m->used = true;
+        m->a = a;
+        m->b = b;
+        m->aIn = m->bIn = true;
+        m->phase = 0; // placement
+        m->first = first;
+        m->turn = first;
+        m->winner = 0;
+    }
+
+    void battleFinish(BattleMatch* m, uint8_t winner) {
+        m->phase = 2;
+        m->winner = winner;
+    }
+
+    // Parse one base-10 int from `p`, advancing past it. Own parser (no strtol, which
+    // the off-target Arduino shim doesn't provide).
+    static bool bsReadInt(const char*& p, int& out) {
+        while(*p == ' ') p++;
+        bool neg = (*p == '-');
+        if(neg) p++;
+        if(*p < '0' || *p > '9') return false;
+        int v = 0;
+        while(*p >= '0' && *p <= '9') v = v * 10 + (*p++ - '0');
+        out = neg ? -v : v;
+        return true;
+    }
+
+    // ships is "r,c,d;r,c,d;..." in fixed ship order; d=0 horizontal, d=1 vertical.
+    void battlePlace(uint8_t pid, const char* json) {
+        BattleMatch* m = battleMatchOf(pid);
+        if(!m || m->phase != 0) return;
+        char buf[96];
+        if(!ha_json_str(json, "ships", buf, sizeof(buf))) return;
+        uint8_t fleet[BS_N];
+        memset(fleet, 0, sizeof(fleet));
+        const char* p = buf;
+        for(uint8_t s = 0; s < BS_SHIPS; s++) {
+            int r, c, d;
+            if(!bsReadInt(p, r)) return;
+            if(*p == ',') p++;
+            if(!bsReadInt(p, c)) return;
+            if(*p == ',') p++;
+            if(!bsReadInt(p, d)) return;
+            if(*p == ';') p++;
+            for(uint8_t k = 0; k < BS_LEN[s]; k++) {
+                int rr = r + (d ? (int)k : 0), cc = c + (d ? 0 : (int)k);
+                if(rr < 0 || rr >= BS_SIZE || cc < 0 || cc >= BS_SIZE) return; // out of bounds
+                int idx = rr * BS_SIZE + cc;
+                if(fleet[idx]) return; // overlap
+                fleet[idx] = s + 1; // ship id 1..BS_SHIPS
+            }
+        }
+        uint8_t* myFleet = (pid == m->a) ? m->fleetA : m->fleetB;
+        memcpy(myFleet, fleet, sizeof(fleet));
+        if(pid == m->a)
+            m->readyA = true;
+        else
+            m->readyB = true;
+        if(m->readyA && m->readyB) {
+            m->phase = 1; // both placed -> firing
+            m->turn = m->first;
+        }
+        pushAll();
+    }
+
+    bool battleShipSunk(const uint8_t* fleet, const uint8_t* shot, uint8_t shipId) {
+        for(int i = 0; i < BS_N; i++)
+            if(fleet[i] == shipId && shot[i] != 2) return false;
+        return true;
+    }
+
+    int battleShipsLeft(const uint8_t* fleet, const uint8_t* shot) {
+        int left = 0;
+        for(uint8_t s = 1; s <= BS_SHIPS; s++)
+            if(!battleShipSunk(fleet, shot, s)) left++;
+        return left;
+    }
+
+    void battleFire(uint8_t pid, int n) {
+        BattleMatch* m = battleMatchOf(pid);
+        if(!m || m->phase != 1 || m->turn != pid) return;
+        if(n < 0 || n >= BS_N) return;
+        uint8_t opp = (pid == m->a) ? m->b : m->a;
+        uint8_t* oppFleet = (pid == m->a) ? m->fleetB : m->fleetA;
+        uint8_t* shotOnOpp = (pid == m->a) ? m->shotOnB : m->shotOnA;
+        if(shotOnOpp[n]) return; // already fired here
+        bool hit = oppFleet[n] != 0;
+        shotOnOpp[n] = hit ? 2 : 1;
+        if(!hit) {
+            m->turn = opp; // miss passes the turn
+            pushAll();
+            return;
+        }
+        if(pid == m->a)
+            m->hitsA++;
+        else
+            m->hitsB++;
+        uint8_t hits = (pid == m->a) ? m->hitsA : m->hitsB;
+        if(battleShipSunk(oppFleet, shotOnOpp, oppFleet[n])) {
+            const char* name = BS_NAMES[oppFleet[n] - 1];
+            if(_p[pid].wsId)
+                haWsSendWs(
+                    _p[pid].wsId,
+                    String("{\"t\":\"toast\",\"msg\":\"You sank their ") + name + "!\"}");
+            if(_p[opp].wsId)
+                haWsSendWs(
+                    _p[opp].wsId,
+                    String("{\"t\":\"toast\",\"msg\":\"Your ") + name + " was sunk!\"}");
+        }
+        if(hits >= BS_TOTAL) battleFinish(m, pid); // all enemy ships down
+        // else: a hit keeps the turn (shoot again)
+        pushAll();
+    }
+
+    void battleRematch(uint8_t pid) {
+        BattleMatch* m = battleMatchOf(pid);
+        if(!m || m->phase != 2) return;
+        if(!m->aIn || !m->bIn) {
+            if(_p[pid].wsId)
+                haWsSendWs(_p[pid].wsId, String("{\"t\":\"toast\",\"msg\":\"Opponent left\"}"));
+            battleOnLeave(pid);
+            pushAll();
+            return;
+        }
+        uint8_t next = (m->first == m->a) ? m->b : m->a; // alternate who fires first
+        battleStart(m, m->a, m->b, next);
+        pushAll();
+    }
+
+    void battleOnLeave(uint8_t pid) {
+        BattleMatch* m = battleMatchOf(pid);
+        if(!m) return;
+        uint8_t opp = (pid == m->a) ? m->b : m->a;
+        if(m->phase == 0 || m->phase == 1) battleFinish(m, opp); // forfeit
+        if(pid == m->a) m->aIn = false;
+        if(pid == m->b) m->bIn = false;
+        if(!m->aIn && !m->bIn) *m = BattleMatch{}; // both gone: free the slot
+    }
+
+    String battleCells(const uint8_t* v) {
+        String s = "[";
+        for(int i = 0; i < BS_N; i++) {
+            if(i) s += ",";
+            s += v[i];
+        }
+        s += "]";
+        return s;
+    }
+
+    String battleJson(uint8_t pid) {
+        BattleMatch* m = battleMatchOf(pid);
+        if(!m)
+            return String("{\"t\":\"bs\",\"phase\":\"lobby\",\"challenges\":") +
+                   duelChallengesJson() + "}";
+        uint8_t me = (pid == m->a) ? 1 : 2;
+        uint8_t opp = (pid == m->a) ? m->b : m->a;
+        if(m->phase == 0) {
+            bool ready = (pid == m->a) ? m->readyA : m->readyB;
+            bool oppReady = (pid == m->a) ? m->readyB : m->readyA;
+            return String("{\"t\":\"bs\",\"phase\":\"place\",\"you\":") + pid + ",\"me\":" + me +
+                   ",\"opp\":\"" + ha_json_escape(_p[opp].nick) + "\",\"ready\":" +
+                   (ready ? "true" : "false") + ",\"oppReady\":" +
+                   (oppReady ? "true" : "false") + "}";
+        }
+        // firing / over: build the two grids from this player's perspective
+        uint8_t* fleetSelf = (pid == m->a) ? m->fleetA : m->fleetB;
+        uint8_t* shotOnSelf = (pid == m->a) ? m->shotOnA : m->shotOnB; // opponent's shots on me
+        uint8_t* oppFleet = (pid == m->a) ? m->fleetB : m->fleetA;
+        uint8_t* shotOnOpp = (pid == m->a) ? m->shotOnB : m->shotOnA; // my shots on them
+        uint8_t mine[BS_N], track[BS_N];
+        for(int i = 0; i < BS_N; i++) {
+            uint8_t sh = shotOnSelf[i]; // 0 none, 1 miss, 2 hit
+            mine[i] = (sh == 2) ? 3 : (sh == 1) ? 2 : (fleetSelf[i] ? 1 : 0);
+            uint8_t st = shotOnOpp[i];
+            // hidden info: only read oppFleet where I've already hit (st == 2)
+            track[i] = (st == 2) ? (battleShipSunk(oppFleet, shotOnOpp, oppFleet[i]) ? 3 : 2) : st;
+        }
+        int myShips = battleShipsLeft(fleetSelf, shotOnSelf);
+        int oppShips = battleShipsLeft(oppFleet, shotOnOpp);
+        String s = "{\"t\":\"bs\",\"phase\":\"";
+        s += (m->phase == 2) ? "over" : "fire";
+        s += "\",\"you\":";
+        s += pid;
+        s += ",\"me\":";
+        s += me;
+        s += ",\"opp\":\"" + ha_json_escape(_p[opp].nick) + "\"";
+        s += ",\"turn\":";
+        s += m->turn;
+        s += ",\"yourTurn\":";
+        s += (m->turn == pid) ? "true" : "false";
+        s += ",\"myShips\":";
+        s += myShips;
+        s += ",\"oppShips\":";
+        s += oppShips;
+        s += ",\"mine\":" + battleCells(mine);
+        s += ",\"track\":" + battleCells(track);
+        if(m->phase == 2) {
+            s += ",\"result\":\"";
+            s += (m->winner == pid) ? "win" : "lose";
+            s += "\",\"oppFleet\":" + battleCells(oppFleet); // reveal at game end
+        }
+        s += "}";
+        return s;
+    }
+
+    // ---------- spectrum (wavelength-style guessing) ----------
+    // Which pack wins the pre-round vote; identical policy to wyrWinningPack().
+    int spectrumWinningPack() {
+        if(_spec.packCount == 0) return 0;
+        int votes[TRIVIA_MAX_TOPICS] = {0};
+        int total = 0;
+        for(uint8_t i = 1; i <= HA_MAX_PLAYERS; i++)
+            if(_p[i].used && _spec.vote[i] >= 0 && _spec.vote[i] < _spec.packCount) {
+                votes[_spec.vote[i]]++;
+                total++;
+            }
+        if(total == 0) return (int)random(_spec.packCount);
+        int best = 0;
+        for(int i = 1; i < _spec.packCount; i++)
+            if(votes[i] > votes[best]) best = i;
+        int tie[TRIVIA_MAX_TOPICS], tn = 0;
+        for(int i = 0; i < _spec.packCount; i++)
+            if(votes[i] == votes[best]) tie[tn++] = i;
+        return tie[(int)random(tn)];
+    }
+
+    void spectrumClear() {
+        partyClear(_spec.pt);
+        _spec.pack = 0;
+        _spec.card = 0;
+        _spec.cardSeq = 0;
+        _spec.psychic = 0;
+        _spec.psychicSeq = 0;
+        _spec.stage = 0;
+        _spec.target = 0;
+        _spec.clue[0] = '\0';
+        for(int i = 0; i <= HA_MAX_PLAYERS; i++) {
+            _spec.vote[i] = -1;
+            _spec.guess[i] = -1;
+            _spec.gained[i] = 0;
+        }
+    }
+
+    void spectrumReady(uint8_t pid, bool val) {
+        if(_active != HA_GAME_SPECTRUM) return;
+        if(_spec.pt.phase != 0 && _spec.pt.phase != 4) return;
+        if(_spec.pt.phase == 4 && val) spectrumClear(); // ready from final -> new game
+        _spec.pt.ready[pid] = val;
+        spectrumCheckStart();
+        pushAll();
+    }
+
+    void spectrumVote(uint8_t pid, int pack) {
+        if(_active != HA_GAME_SPECTRUM || _spec.pt.phase != 0) return;
+        if(pack < 0 || pack >= _spec.packCount) return;
+        _spec.vote[pid] = (int8_t)pack;
+        pushAll();
+    }
+
+    void spectrumCheckStart() {
+        if(_spec.packCount == 0) return;
+        Party& pt = _spec.pt;
+        if(pt.phase == 0 && partyAllReady(pt)) {
+            pt.phase = 1;
+            pt.countdownEnd = millis() + (uint32_t)PARTY_COUNTDOWN * 1000;
+            pt.lastSec = -1;
+        } else if(pt.phase == 1 && !partyAllReady(pt)) {
+            pt.phase = 0;
+        }
+    }
+
+    // The psychic rotates across rounds: the (psychicSeq mod N)-th connected player.
+    uint8_t spectrumPickPsychic() {
+        int n = connectedCount();
+        if(n <= 0) return 0;
+        int want = _spec.psychicSeq % n;
+        int seen = 0;
+        for(uint8_t i = 1; i <= HA_MAX_PLAYERS; i++) {
+            if(!_p[i].used) continue;
+            if(seen == want) return i;
+            seen++;
+        }
+        return 0;
+    }
+
+    void spectrumNextRound(uint32_t now) {
+        Party& pt = _spec.pt;
+        WyrPack& pk = _spec.packs[_spec.pack];
+        if(pt.round >= SPECTRUM_ROUNDS || pk.count == 0) {
+            pt.phase = 4; // final
+            pushAll();
+            return;
+        }
+        pt.round++;
+        _spec.psychic = spectrumPickPsychic();
+        _spec.psychicSeq++;
+        _spec.card = (uint8_t)(_spec.cardSeq % pk.count);
+        _spec.cardSeq++;
+        _spec.target = 5 + (int)random(91); // 5..95, avoid the very edges
+        _spec.stage = 0; // clue first
+        _spec.clue[0] = '\0';
+        for(int i = 0; i <= HA_MAX_PLAYERS; i++) {
+            _spec.guess[i] = -1;
+            _spec.gained[i] = 0;
+        }
+        pt.deadline = now + (uint32_t)SPECTRUM_CLUE_SECS * 1000;
+        pt.phase = 2;
+        pushAll();
+    }
+
+    void spectrumClue(uint8_t pid, const char* text) {
+        if(_active != HA_GAME_SPECTRUM || _spec.pt.phase != 2 || _spec.stage != 0) return;
+        if(pid != _spec.psychic) return;
+        strlcpy(_spec.clue, text, sizeof(_spec.clue));
+        _spec.stage = 1; // move to guessing
+        _spec.pt.deadline = millis() + (uint32_t)SPECTRUM_GUESS_SECS * 1000;
+        haUartEvent(String("{\"draw\":\"") + ha_json_escape(_p[pid].nick) + ": " +
+                    ha_json_escape(_spec.clue) + "\"}");
+        pushAll();
+    }
+
+    bool spectrumAllGuessed() {
+        int guessers = 0;
+        for(uint8_t i = 1; i <= HA_MAX_PLAYERS; i++) {
+            if(!_p[i].used || i == _spec.psychic) continue;
+            guessers++;
+            if(_spec.guess[i] < 0) return false;
+        }
+        return guessers >= 1;
+    }
+
+    void spectrumGuess(uint8_t pid, int val) {
+        if(_active != HA_GAME_SPECTRUM || _spec.pt.phase != 2 || _spec.stage != 1) return;
+        if(pid == _spec.psychic) return; // the clue-giver doesn't guess
+        if(val < 0) val = 0;
+        if(val > 100) val = 100;
+        _spec.guess[pid] = (int8_t)val;
+        if(spectrumAllGuessed()) spectrumReveal(millis());
+        else pushAll();
+    }
+
+    // Points by closeness of the guess (0..100) to the hidden target (0..100).
+    // A tight bullseye (±2) for landing right on it, then two 5-wide rings,
+    // matching the dial's three scoring wedges exactly.
+    static int spectrumPoints(int target, int guess) {
+        int d = target - guess;
+        if(d < 0) d = -d;
+        if(d <= 2) return 4;
+        if(d <= 7) return 3;
+        if(d <= 12) return 2;
+        return 0;
+    }
+
+    void spectrumReveal(uint32_t now) {
+        int sum = 0, guessers = 0;
+        for(uint8_t i = 1; i <= HA_MAX_PLAYERS; i++) {
+            if(!_p[i].used || i == _spec.psychic || _spec.guess[i] < 0) continue;
+            int pts = spectrumPoints(_spec.target, _spec.guess[i]);
+            _spec.gained[i] = pts;
+            _p[i].score += pts;
+            if(pts) haUartScore(i, pts, "spectrum");
+            sum += pts;
+            guessers++;
+        }
+        // The psychic scores by how well the group did: the average guesser score,
+        // so a clue that lands everyone near the target is worth the most.
+        if(_spec.psychic && guessers > 0) {
+            int avg = (sum + guessers / 2) / guessers;
+            _spec.gained[_spec.psychic] = avg;
+            _p[_spec.psychic].score += avg;
+            if(avg) haUartScore(_spec.psychic, avg, "clue");
+        }
+        haUartRoundResult(String("{\"spectrum\":\"round ") + _spec.pt.round + "\"}");
+        _spec.pt.phase = 3;
+        _spec.pt.revealUntil = now + SPECTRUM_REVEAL_MS;
+        pushAll();
+    }
+
+    void spectrumAgain(uint8_t pid) {
+        (void)pid;
+        if(_active != HA_GAME_SPECTRUM || _spec.pt.phase != 4) return;
+        spectrumClear();
+        pushAll();
+    }
+
+    void spectrumTick(uint32_t now) {
+        Party& pt = _spec.pt;
+        if(pt.phase == 1) {
+            if(partyCountdownDone(pt, now)) {
+                pt.round = 0;
+                _spec.pack = (uint8_t)spectrumWinningPack();
+                _spec.psychicSeq = 0;
+                _spec.cardSeq = 0;
+                spectrumNextRound(now);
+            }
+        } else if(pt.phase == 2) {
+            if(_spec.stage == 0) {
+                // Clue window expired with no clue: move on to guessing anyway so a
+                // silent/absent psychic can't stall the game.
+                if((int32_t)(now - pt.deadline) >= 0) {
+                    _spec.stage = 1;
+                    pt.deadline = now + (uint32_t)SPECTRUM_GUESS_SECS * 1000;
+                    pushAll();
+                }
+            } else {
+                if((int32_t)(now - pt.deadline) >= 0 || spectrumAllGuessed())
+                    spectrumReveal(now);
+            }
+        } else if(pt.phase == 3) {
+            if((int32_t)(now - pt.revealUntil) >= 0) spectrumNextRound(now);
+        }
+    }
+
+    String spectrumJson(uint8_t pid) {
+        Party& pt = _spec.pt;
+        if(pt.phase == 0) {
+            String s = String("{\"t\":\"spectrum\",\"phase\":\"lobby\",\"you\":") + pid +
+                       ",\"players\":" + partyPlayersJson(pt);
+            s += ",\"packs\":[";
+            int votes[TRIVIA_MAX_TOPICS] = {0};
+            for(uint8_t i = 1; i <= HA_MAX_PLAYERS; i++)
+                if(_p[i].used && _spec.vote[i] >= 0 && _spec.vote[i] < _spec.packCount)
+                    votes[_spec.vote[i]]++;
+            for(int i = 0; i < _spec.packCount; i++) {
+                if(i) s += ",";
+                s += "{\"name\":\"" + ha_json_escape(_spec.packs[i].name.c_str()) +
+                     "\",\"votes\":" + votes[i] + "}";
+            }
+            s += "],\"myvote\":" + String((int)_spec.vote[pid]) + "}";
+            return s;
+        }
+        if(pt.phase == 1)
+            return String("{\"t\":\"spectrum\",\"phase\":\"countdown\",\"sec\":") +
+                   partyCountdownSec(pt) + "}";
+        if(pt.phase == 4)
+            return String("{\"t\":\"spectrum\",\"phase\":\"final\",\"board\":") + triviaBoard() +
+                   "}";
+
+        WyrPack& pk = _spec.packs[_spec.pack];
+        const char* left = pk.items[_spec.card].a.c_str();
+        const char* right = pk.items[_spec.card].b.c_str();
+        bool mePsychic = (pid == _spec.psychic);
+        bool reveal = (pt.phase == 3);
+        const char* stage = reveal ? "reveal" : (_spec.stage == 0 ? "clue" : "guess");
+
+        String s = String("{\"t\":\"spectrum\",\"phase\":\"play\",\"stage\":\"") + stage +
+                   "\",\"round\":" + pt.round + ",\"rounds\":" + SPECTRUM_ROUNDS + ",\"left\":\"" +
+                   ha_json_escape(left) + "\",\"right\":\"" + ha_json_escape(right) +
+                   "\",\"psychic\":\"" + ha_json_escape(_p[_spec.psychic].nick) +
+                   "\",\"iam\":" + (mePsychic ? "true" : "false");
+        // The psychic sees the target during the clue stage; on reveal everyone does.
+        if(reveal || mePsychic) {
+            s += ",\"target\":";
+            s += _spec.target;
+        }
+        if(_spec.stage == 1 || reveal) {
+            s += ",\"clue\":\"";
+            s += ha_json_escape(_spec.clue);
+            s += "\"";
+        }
+        if(!mePsychic) {
+            s += ",\"myguess\":";
+            s += (int)_spec.guess[pid];
+        }
+        if(reveal) {
+            s += ",\"guesses\":[";
+            bool first = true;
+            for(uint8_t i = 1; i <= HA_MAX_PLAYERS; i++) {
+                if(!_p[i].used || i == _spec.psychic || _spec.guess[i] < 0) continue;
+                if(!first) s += ",";
+                first = false;
+                s += "{\"nick\":\"" + ha_json_escape(_p[i].nick) + "\",\"g\":" +
+                     (int)_spec.guess[i] + ",\"pts\":" + _spec.gained[i] + "}";
+            }
+            s += "]";
+            s += ",\"mygain\":";
+            s += _spec.gained[pid];
+            s += ",\"deadline\":";
+            s += pt.revealUntil;
+            s += ",\"dur\":";
+            s += (SPECTRUM_REVEAL_MS / 1000);
+        } else {
+            s += ",\"deadline\":";
+            s += pt.deadline;
+            s += ",\"dur\":";
+            s += (_spec.stage == 0 ? SPECTRUM_CLUE_SECS : SPECTRUM_GUESS_SECS);
+        }
         s += ",\"scores\":" + playersJson() + "}";
         return s;
     }

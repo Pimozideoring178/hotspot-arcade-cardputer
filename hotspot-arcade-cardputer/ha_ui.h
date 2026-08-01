@@ -28,6 +28,7 @@ static const HaGameItem HA_UI_GAMES[] = {
     {HA_GAME_TRIVIA, "Trivia"},
     {HA_GAME_WYR, "Would You Rather"},
     {HA_GAME_SCRAMBLE, "Word Scramble"},
+    {HA_GAME_SPECTRUM, "Spectrum"},
     {HA_GAME_REACT, "Reaction Duel"},
     {HA_GAME_CONNECT4, "Connect Four"},
     {HA_GAME_TICTACTOE, "Tic-Tac-Toe"},
@@ -35,6 +36,8 @@ static const HaGameItem HA_UI_GAMES[] = {
     {HA_GAME_REVERSI, "Reversi"},
     {HA_GAME_DRAW, "Drawing"},
     {HA_GAME_PONG, "Pong"},
+    {HA_GAME_GUESSCOLOR, "Guess the Color"},
+    {HA_GAME_BATTLESHIP, "Battleship"},
     {HA_GAME_NONE, "None (lobby)"},
 };
 static const int HA_UI_GAME_COUNT = sizeof(HA_UI_GAMES) / sizeof(HA_UI_GAMES[0]);

@@ -6,11 +6,11 @@ Tarik Caramanico). Nothing in `vendor/` is edited here -- see README.
 
 | | |
 | --- | --- |
-| commit | `9e07058900e21d447942ecd071d4076dbe078dfc` |
-| describe | `9e07058` (working tree was dirty at sync time) |
+| commit | `c7f49315f5026510e5bab0fd94049b9d0eae18ee` |
+| describe | `v1.3.0` |
 | engine | `vendor/engine/` -- ha_proto.h, ha_json.h, ha_games.h |
 | web bundle | `vendor/web/` -- 1 file(s) |
-| content packs | `vendor/packs/` -- 24 pack(s) |
+| content packs | `vendor/packs/` -- 28 pack(s) |
 | async libs | `vendor/libs/` -- AsyncTCP, ESPAsyncWebServer (third-party, own LICENSE files) |
 
 Refresh with:
