@@ -1,10 +1,10 @@
-### What's new in v0.2.0
+### v0.2.1 — boot-loop fix
 
-Three new games — **13 total** now:
+Fixes an **endless launcher → app → reset loop** when installed via M5Launcher:
+the firmware now confirms its OTA image on boot, so the launcher's rollback no
+longer bounces it back. If v0.2.0 kept rebooting for you, install this.
 
-- **Spectrum** — one player sees a hidden point on a dial and gives a clue; everyone else grabs the dial to guess where it lands. Closest wins.
-- **Guess the Color** — a color flashes; guess its RGB. Closest guess wins, fastest gets a speed bonus.
-- **Battleship** — 1v1: hide your fleet on a 10×10 grid, then take turns firing to sink the other's ships.
+Same **13 games** as v0.2.0 (Spectrum, Guess the Color, Battleship + the rest).
 
 ### Install
 
