@@ -19,6 +19,7 @@
 #include <ESPAsyncWebServer.h>
 #include <DNSServer.h>
 #include <esp_wifi.h>
+#include <esp_ota_ops.h>
 #include <M5Cardputer.h>
 
 #include "ha_proto.h"
@@ -274,6 +275,14 @@ void setup() {
     auto cfg = M5.config();
     M5Cardputer.begin(cfg, true);
     Serial.begin(115200);
+
+    // M5Launcher installs apps with the ESP-IDF OTA rollback flag set: an app that
+    // boots but never confirms itself gets rolled back to the launcher on the next
+    // reset. This firmware is healthy the moment it reaches here, so confirm the
+    // image -- otherwise any reset (incl. a host toggling USB DTR/RTS) bounces us
+    // back to the launcher in an endless launcher->app->reset loop. No-op on a
+    // plain esptool flash where there's nothing pending to confirm.
+    esp_ota_mark_app_valid_cancel_rollback();
 
     engineMutex = xSemaphoreCreateRecursiveMutex();
     haUiBegin();
