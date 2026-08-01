@@ -70,3 +70,18 @@ jobs:
             esptool --chip esp32s3 --port <PORT> --baud 921600 write_flash 0x0 hotspot-arcade-cardputer.full.bin
             ```
             Cardputer v1 (StampS3, 8MB). See the README for the difference and for recovery.
+
+      # Push the release to M5Burner too, which mirrors into LauncherHub. Runs only
+      # when the two secrets are set (add them under Settings -> Secrets -> Actions):
+      #   M5BURNER_USER  M5BURNER_PWD   (an M5Stack community account)
+      # Uses bmorcelli's m5burner_post.py; the fid is baked into tools/m5burner_post.py.
+      - name: Publish to M5Burner
+        if: startsWith(github.ref, 'refs/tags/v') && env.M5BURNER_USER != ''
+        env:
+          M5BURNER_USER: ${{ secrets.M5BURNER_USER }}
+          M5BURNER_PWD: ${{ secrets.M5BURNER_PWD }}
+        run: |
+          python3 -m pip install --quiet requests
+          python3 tools/m5burner_post.py \
+            --user "$M5BURNER_USER" --password "$M5BURNER_PWD" \
+            --tag "${GITHUB_REF_NAME}" --artifacts-dir build

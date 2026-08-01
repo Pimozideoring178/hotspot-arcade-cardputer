@@ -1,6 +1,6 @@
 {
   "name": "Hotspot Arcade",
-  "description": "Ten party games your guests play from their phones. The Cardputer runs an open WiFi access point and a captive portal; everyone joins, no app to install, and the Cardputer screen is the host dashboard and scoreboard.",
+  "description": "Several offline party games your guests play from their phones. The Cardputer runs an open WiFi access point and a captive portal; everyone joins, no app to install, and the Cardputer screen is the host dashboard and scoreboard.",
   "keywords": "ESP32-S3, Cardputer, WiFi, captive portal, party games, multiplayer, trivia, arcade",
   "author": "genkigenki",
   "repository": "https://github.com/genkigenki/hotspot-arcade-cardputer",
@@ -13,6 +13,6 @@
       }
     }
   ],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "framework": "Arduino"
 }

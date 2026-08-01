@@ -8,7 +8,7 @@
 [![latest release](https://img.shields.io/github/v/release/genkigenki/hotspot-arcade-cardputer?sort=semver)](https://github.com/genkigenki/hotspot-arcade-cardputer/releases/latest)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Ten party games your guests play from their phones. The Cardputer opens a WiFi
+Several offline party games your guests play from their phones. The Cardputer opens a WiFi
 access point and a captive portal, everyone joins and plays in the browser — no app
 to install — and the Cardputer's own screen is the host: lobby, game picker,
 scoreboard, event log.
@@ -85,12 +85,12 @@ the live scoreboard, and the last event. Everything else is one key away.
 
 Serial at 115200 prints the AP address, asset counts and free heap at boot.
 
-Games: trivia, would-you-rather, word scramble, reaction duel, connect four,
-tic-tac-toe, dots & boxes, reversi, drawing, pong. All of them are phone-driven; the
-host picks which one is live and watches.
+Games: trivia, would-you-rather, word scramble, spectrum, reaction duel, connect four,
+tic-tac-toe, dots & boxes, reversi, drawing, pong, guess the color, battleship. All of
+them are phone-driven; the host picks which one is live and watches.
 
 <p align="center">
-  <img src="docs/img/photo-3.jpg" alt="The game picker with all ten games; the active one is marked" width="700">
+  <img src="docs/img/photo-3.jpg" alt="The game picker with all the games; the active one is marked" width="700">
 </p>
 
 ## Build
@@ -150,9 +150,10 @@ resolve — those copies are generated and carry a banner saying so.
 
 ## Distribution
 
-- **Releases** — the app image and the trimmed full image, on every tag.
-- **M5Burner** — published to M5Burner
-- **M5Launcher / LauncherHub** — added to the catalog. 
+- **Releases** — the app image and the trimmed full image, built and published on every `v*` tag.
+- **M5Burner** — listed in the catalog. Tagged releases auto-publish a new version when the
+  `M5BURNER_USER` / `M5BURNER_PWD` repo secrets are set (via `tools/m5burner_post.py`).
+- **M5Launcher / LauncherHub** — in the catalog; mirrored automatically from M5Burner.
 
 ## Status
 
