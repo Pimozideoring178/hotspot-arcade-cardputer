@@ -31,7 +31,23 @@
 #include "ha_ui.h"
 
 #define WS_MSG_MAX 512
-#define AP_MAX_CONN 8 // what the Flipper build negotiates via HA_MSG_CONFIG
+// 10 is the ESP32-S3 softAP hardware maximum (ESP_WIFI_MAX_CONN_NUM). More phones
+// than this cannot associate no matter what -- the chip, not the code, is the cap.
+#define AP_MAX_CONN 10
+
+// ---- host speaker: short jingles, respecting the audio level set in the UI ----
+// 0 = off, 1 = low, 2 = high. Stored here; the UI settings screen changes it.
+uint8_t haAudioLevel = 1;
+static void haBeep(uint16_t freq, uint16_t ms) {
+    if(haAudioLevel == 0) return;
+    M5Cardputer.Speaker.setVolume(haAudioLevel == 2 ? 200 : 80);
+    M5Cardputer.Speaker.tone(freq, ms);
+}
+// Single notes: consecutive tone() calls replace each other rather than queue, and
+// the join/leave sinks run on the async task where a blocking delay is unwelcome.
+static void haJingleUp() { haBeep(1319, 160); }   // AP came up: clear high note
+static void haJingleJoin() { haBeep(1568, 90); }  // a phone joined: bright blip up
+static void haJingleLeave() { haBeep(523, 130); } // a phone left: low blip
 
 static DNSServer dnsServer;
 static AsyncWebServer server(80);
@@ -60,10 +76,11 @@ void haWsBroadcast(const String& msg) {
     ws.textAll(msg);
 }
 void haUartJoin(uint8_t pid, const char* nick) {
-    haHostJoin(pid, nick);
+    if(haHostJoin(pid, nick)) haJingleJoin(); // jingle on a new join, not a rename
 }
 void haUartLeave(uint8_t pid) {
     haHostLeave(pid);
+    haJingleLeave();
 }
 void haUartScore(uint8_t pid, int delta, const char* reason) {
     (void)reason;
@@ -195,6 +212,7 @@ static void startPortal() {
     haHost.portalRunning = true;
     haHostLog("AP up");
     ENGINE_UNLOCK();
+    haJingleUp();
     Serial.printf("[ha] AP \"%s\" up at %s\n", apName, WiFi.softAPIP().toString().c_str());
 }
 

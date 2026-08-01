@@ -1,10 +1,13 @@
-### v0.2.1 — boot-loop fix
+### v0.3.0 — host UI overhaul + audio
 
-Fixes an **endless launcher → app → reset loop** when installed via M5Launcher:
-the firmware now confirms its OTA image on boot, so the launcher's rollback no
-longer bounces it back. If v0.2.0 kept rebooting for you, install this.
+- **Live 2-column scoreboard** on the main screen — all 10 players at once, ranked, leader in gold
+- **Settings screen** (`S`): rename the AP, audio off/low/high, AP on/off, event log
+- 🔊 **speaker jingles** when the AP comes up and when players join or leave
+- **Game picker**: sort A–Z or by most-played (`S`), `1v1` tags, one-line blurbs, page with `,`/`/`
+- Reset scores moved to the **Leaderboard** (`L`)
+- **Up to 10 phones** (the ESP32-S3 softAP hardware maximum)
 
-Same **13 games** as v0.2.0 (Spectrum, Guess the Color, Battleship + the rest).
+Same 13 games as v0.2.
 
 ### Install
 

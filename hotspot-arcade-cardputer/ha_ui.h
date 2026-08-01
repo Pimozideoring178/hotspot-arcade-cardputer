@@ -19,26 +19,30 @@ const char* haHostSsid();
 String haHostIp();
 void haHostSnapshot(HaHost& dst);
 
-// Same list, same order as the Flipper's game_select scene.
+// Same list, same order as the Flipper's game_select scene. `duel` marks the 1v1
+// challenge games (they pair players off into matches); `desc` is a one-line blurb
+// shown under the selection.
 struct HaGameItem {
     uint8_t id;
     const char* label;
+    const char* desc;
+    bool duel;
 };
 static const HaGameItem HA_UI_GAMES[] = {
-    {HA_GAME_TRIVIA, "Trivia"},
-    {HA_GAME_WYR, "Would You Rather"},
-    {HA_GAME_SCRAMBLE, "Word Scramble"},
-    {HA_GAME_SPECTRUM, "Spectrum"},
-    {HA_GAME_REACT, "Reaction Duel"},
-    {HA_GAME_CONNECT4, "Connect Four"},
-    {HA_GAME_TICTACTOE, "Tic-Tac-Toe"},
-    {HA_GAME_DOTS, "Dots & Boxes"},
-    {HA_GAME_REVERSI, "Reversi"},
-    {HA_GAME_DRAW, "Drawing"},
-    {HA_GAME_PONG, "Pong"},
-    {HA_GAME_GUESSCOLOR, "Guess the Color"},
-    {HA_GAME_BATTLESHIP, "Battleship"},
-    {HA_GAME_NONE, "None (lobby)"},
+    {HA_GAME_TRIVIA, "Trivia", "Quiz, fastest right wins", false},
+    {HA_GAME_WYR, "Would You Rather", "Group vote, A or B", false},
+    {HA_GAME_SCRAMBLE, "Word Scramble", "Unscramble the word", false},
+    {HA_GAME_SPECTRUM, "Spectrum", "Give a clue, dial to guess", false},
+    {HA_GAME_REACT, "Reaction Duel", "Tap on green, fastest wins", false},
+    {HA_GAME_CONNECT4, "Connect Four", "Four in a row", true},
+    {HA_GAME_TICTACTOE, "Tic-Tac-Toe", "Three in a row", true},
+    {HA_GAME_DOTS, "Dots & Boxes", "Close the most boxes", true},
+    {HA_GAME_REVERSI, "Reversi", "Flip discs, most wins", true},
+    {HA_GAME_DRAW, "Drawing", "Draw it, others guess", false},
+    {HA_GAME_PONG, "Pong", "Classic paddle rally", true},
+    {HA_GAME_GUESSCOLOR, "Guess the Color", "Match the RGB colour", false},
+    {HA_GAME_BATTLESHIP, "Battleship", "Hide a fleet, sink theirs", true},
+    {HA_GAME_NONE, "None (lobby)", "Just the join lobby", false},
 };
 static const int HA_UI_GAME_COUNT = sizeof(HA_UI_GAMES) / sizeof(HA_UI_GAMES[0]);
 
@@ -48,14 +52,30 @@ static const char* haUiGameLabel(uint8_t id) {
     return "None";
 }
 
-enum HaUiView { HA_VIEW_DASH, HA_VIEW_GAMES, HA_VIEW_BOARD, HA_VIEW_CONSOLE, HA_VIEW_SSID };
+enum HaUiView {
+    HA_VIEW_DASH,
+    HA_VIEW_GAMES,
+    HA_VIEW_BOARD,
+    HA_VIEW_CONSOLE,
+    HA_VIEW_SSID,
+    HA_VIEW_SETTINGS
+};
+
+// Audio level (0 off / 1 low / 2 high) lives in the .ino (the speaker jingles are
+// there); the settings screen reads and cycles it.
+extern uint8_t haAudioLevel;
+#define HA_SET_COUNT 4 // settings rows: SSID, Audio, AP, Event log
 
 static M5Canvas haUiCanvas(&M5Cardputer.Display);
 static bool haUiSprite = false;
 static HaUiView haUiView = HA_VIEW_DASH;
 static int haUiCursor = 0;
 static int haUiScroll = 0;
+static int haUiDashScroll = 0; // dashboard player-list scroll offset
 static char haUiEdit[33] = "";
+static uint8_t haGameSort = 0;       // game picker order: 0 alphabetical, 1 most played
+static uint16_t haGamePlays[16] = {}; // rough per-game play count (indexed by game id)
+static int haGamesOrder[HA_UI_GAME_COUNT]; // display order, filled per sort mode
 static HaHost haUiSnap; // draw source; never touched by the async task
 static uint32_t haUiDrawnRev = 0xFFFFFFFF;
 static uint32_t haUiLastDraw = 0;
@@ -118,100 +138,171 @@ static int haUiSorted(uint8_t* out) {
     return n;
 }
 
+// Two-column live scoreboard at the small font, so all 10 (the softAP max) fit on
+// one screen. Columns fill in rank order down the left, then down the right; each
+// cell reads "rank.nick:score".
+static void haUiDrawScoreCols(lgfx::LovyanGFX* g, uint8_t* order, int n, int top, int rowsPerCol) {
+    g->setTextSize(1);
+    const int rowH = 13;
+    for(int i = 0; i < n && i < rowsPerCol * 2; i++) {
+        int col = i / rowsPerCol, row = i % rowsPerCol;
+        int x = col ? HA_UI_W / 2 + 4 : 3;
+        int y = top + row * rowH;
+        const HaHostPlayer& p = haUiSnap.p[order[i]];
+        g->setTextColor(i == 0 ? TFT_YELLOW : TFT_WHITE, TFT_BLACK);
+        char nk[10], cell[24];
+        snprintf(nk, sizeof(nk), "%s", p.nick); // clip nick to ~9 chars per column
+        snprintf(cell, sizeof(cell), "%d.%s:%ld", i + 1, nk, (long)p.score);
+        g->drawString(cell, x, y);
+    }
+}
+
 static void haUiDrawDash(lgfx::LovyanGFX* g) {
     haUiHeader(g, "HOTSPOT ARCADE");
-    g->setTextColor(TFT_WHITE, TFT_BLACK);
+    g->setTextFont(1);
+    g->setTextSize(1);
 
-    char line[64];
-    snprintf(line, sizeof(line), "SSID %s", haHostSsid());
+    // Line 1: SSID + the join URL, on one line.
+    char line[80];
+    g->setTextColor(haUiSnap.portalRunning ? TFT_GREEN : TFT_RED, TFT_BLACK);
+    snprintf(line, sizeof(line), "%s  http://%s", haHostSsid(), haHostIp().c_str());
     g->drawString(line, 3, 15);
 
-    g->setTextColor(haUiSnap.portalRunning ? TFT_GREEN : TFT_RED, TFT_BLACK);
-    snprintf(
-        line,
-        sizeof(line),
-        "%s  %s",
-        haUiSnap.portalRunning ? "AP UP" : "AP OFF",
-        haHostIp().c_str());
-    g->drawString(line, 3, 25);
-
+    // Line 2: active game + player count.
     uint8_t order[HA_MAX_PLAYERS + 1];
     int n = haUiSorted(order);
-
-    // Everything on screen comes from the one snapshot, so the count can't
-    // disagree with the list under it.
     g->setTextColor(TFT_CYAN, TFT_BLACK);
-    snprintf(line, sizeof(line), "Game %s   Players %d", haUiGameLabel(haUiSnap.activeGame), n);
-    g->drawString(line, 3, 35);
+    snprintf(line, sizeof(line), "Game: %s   Players: %d", haUiGameLabel(haUiSnap.activeGame), n);
+    g->drawString(line, 3, 27);
 
-    g->drawFastHLine(0, 45, HA_UI_W, TFT_DARKGREY);
+    g->drawFastHLine(0, 38, HA_UI_W, TFT_DARKGREY);
 
-    int y = 48;
-    int shown = n < 6 ? n : 6;
-    g->setTextColor(TFT_WHITE, TFT_BLACK);
-    for(int i = 0; i < shown; i++) {
-        const HaHostPlayer& p = haUiSnap.p[order[i]];
-        snprintf(line, sizeof(line), "%d %-20s %5ld", i + 1, p.nick, (long)p.score);
-        g->drawString(line, 3, y);
-        y += HA_UI_ROW;
-    }
     if(n == 0) {
         g->setTextColor(TFT_DARKGREY, TFT_BLACK);
-        g->drawString("waiting for phones to join...", 3, y);
-    } else if(n > shown) {
-        g->setTextColor(TFT_DARKGREY, TFT_BLACK);
-        snprintf(line, sizeof(line), "+%d more (L)", n - shown);
-        g->drawString(line, 3, y);
+        g->drawString("waiting for phones to join...", 3, 46);
+    } else {
+        haUiDrawScoreCols(g, order, n, 44, 5); // 2 columns x 5 = up to 10
+        if(n > 10) {
+            g->setTextColor(TFT_DARKGREY, TFT_BLACK);
+            snprintf(line, sizeof(line), "+%d more", n - 10);
+            g->drawString(line, 3, HA_UI_H - 22);
+        }
     }
 
     if(haUiSnap.lastEvent[0]) {
+        g->setTextFont(1);
+        g->setTextSize(1);
         g->setTextColor(TFT_YELLOW, TFT_BLACK);
         g->drawString(haUiSnap.lastEvent, 3, HA_UI_H - 22);
     }
-    haUiFooter(g, "G game  L board  C log  R reset  E end  N ssid");
+    haUiFooter(g, "G game   L board   S settings   E end");
+}
+
+#define HA_GAMES_ROW 16 // px per game row at text size 2
+
+// Fill haGamesOrder for the current sort mode. "None (lobby)" is always kept last.
+static void haUiComputeGamesOrder() {
+    int m = 0;
+    for(int i = 0; i < HA_UI_GAME_COUNT; i++)
+        if(HA_UI_GAMES[i].id != HA_GAME_NONE) haGamesOrder[m++] = i;
+    // insertion sort: alphabetical by label, or by play count desc
+    for(int a = 1; a < m; a++) {
+        int k = haGamesOrder[a], j = a - 1;
+        while(j >= 0) {
+            bool swap;
+            if(haGameSort == 1)
+                swap = haGamePlays[HA_UI_GAMES[haGamesOrder[j]].id] <
+                       haGamePlays[HA_UI_GAMES[k].id];
+            else
+                swap = strcmp(HA_UI_GAMES[haGamesOrder[j]].label, HA_UI_GAMES[k].label) > 0;
+            if(!swap) break;
+            haGamesOrder[j + 1] = haGamesOrder[j];
+            j--;
+        }
+        haGamesOrder[j + 1] = k;
+    }
+    for(int i = 0; i < HA_UI_GAME_COUNT; i++) // append None last
+        if(HA_UI_GAMES[i].id == HA_GAME_NONE) haGamesOrder[m++] = i;
 }
 
 static void haUiDrawGames(lgfx::LovyanGFX* g) {
-    haUiHeader(g, "SELECT GAME");
-    int rows = 10; // 12..112
+    haUiComputeGamesOrder();
+    char title[32];
+    snprintf(title, sizeof(title), "GAMES - %s", haGameSort == 1 ? "MOST PLAYED" : "A-Z");
+    haUiHeader(g, title);
+
+    int descY = HA_UI_H - 22;
+    int rows = (descY - 14) / HA_GAMES_ROW;
+    if(rows < 1) rows = 1;
     if(haUiCursor < haUiScroll) haUiScroll = haUiCursor;
     if(haUiCursor >= haUiScroll + rows) haUiScroll = haUiCursor - rows + 1;
-    int y = 14;
+
+    g->setTextSize(2);
+    int y = 15;
     for(int i = haUiScroll; i < HA_UI_GAME_COUNT && i < haUiScroll + rows; i++) {
+        const HaGameItem& it = HA_UI_GAMES[haGamesOrder[i]];
         bool sel = (i == haUiCursor);
-        bool live = (HA_UI_GAMES[i].id == haUiSnap.activeGame);
-        if(sel) g->fillRect(0, y - 1, HA_UI_W, HA_UI_ROW, TFT_BLUE);
+        bool live = (it.id == haUiSnap.activeGame);
+        if(sel) g->fillRect(0, y - 1, HA_UI_W, HA_GAMES_ROW, TFT_BLUE);
         g->setTextColor(live ? TFT_GREEN : TFT_WHITE, sel ? TFT_BLUE : TFT_BLACK);
-        char line[48];
-        snprintf(line, sizeof(line), "%s%s", live ? "* " : "  ", HA_UI_GAMES[i].label);
-        g->drawString(line, 3, y);
-        y += HA_UI_ROW;
+        char nm[18];
+        snprintf(nm, sizeof(nm), "%s%s", live ? "*" : "", it.label);
+        g->drawString(nm, 3, y);
+        if(it.duel) {
+            g->setTextSize(1);
+            g->setTextColor(sel ? TFT_WHITE : TFT_ORANGE, sel ? TFT_BLUE : TFT_BLACK);
+            g->drawString("1v1", HA_UI_W - 22, y + 4);
+            g->setTextSize(2);
+        }
+        y += HA_GAMES_ROW;
     }
-    // Hints name the key by its printed legend, not the character it sends: the
-    // top-left key is labelled ESC (it reports '`'), and ; / . are labelled with
-    // arrows. Telling the host to press '`' would be telling them the wrong thing.
-    haUiFooter(g, "UP/DOWN move   ENTER select   ESC back");
+    g->setTextSize(1);
+
+    // Selected game's one-line description.
+    g->fillRect(0, descY - 2, HA_UI_W, 12, TFT_BLACK);
+    g->setTextColor(TFT_CYAN, TFT_BLACK);
+    g->drawString(HA_UI_GAMES[haGamesOrder[haUiCursor]].desc, 3, descY);
+
+    haUiFooter(g, ";/. move  S sort  ENTER pick  ESC back");
 }
 
 static void haUiDrawBoard(lgfx::LovyanGFX* g) {
     haUiHeader(g, "LEADERBOARD");
     uint8_t order[HA_MAX_PLAYERS + 1];
     int n = haUiSorted(order);
-    g->setTextColor(TFT_WHITE, TFT_BLACK);
     if(n == 0) {
         g->setTextColor(TFT_DARKGREY, TFT_BLACK);
-        g->drawString("no players", 3, 16);
-    }
-    int y = 14;
-    for(int i = 0; i < n && i < 11; i++) {
-        const HaHostPlayer& p = haUiSnap.p[order[i]];
-        char line[64];
-        snprintf(line, sizeof(line), "%2d %-20s %6ld", i + 1, p.nick, (long)p.score);
-        g->setTextColor(i == 0 ? TFT_YELLOW : TFT_WHITE, TFT_BLACK);
-        g->drawString(line, 3, y);
-        y += HA_UI_ROW;
+        g->drawString("no players yet", 3, 18);
+    } else {
+        haUiDrawScoreCols(g, order, n, 16, 5); // same 2 columns x 5 as the dashboard
     }
     haUiFooter(g, "R reset scores   ESC back");
+}
+
+static const char* haUiAudioName() {
+    return haAudioLevel == 0 ? "off" : haAudioLevel == 1 ? "low" : "high";
+}
+
+static void haUiDrawSettings(lgfx::LovyanGFX* g) {
+    haUiHeader(g, "SETTINGS");
+    char l0[48], l1[24], l2[20];
+    snprintf(l0, sizeof(l0), "SSID: %s", haHostSsid());
+    snprintf(l1, sizeof(l1), "Audio: %s", haUiAudioName());
+    snprintf(l2, sizeof(l2), "AP: %s", haUiSnap.portalRunning ? "on" : "off");
+    const char* items[HA_SET_COUNT] = {l0, l1, l2, "Show event log"};
+
+    g->setTextSize(1);
+    int y = 22;
+    for(int i = 0; i < HA_SET_COUNT; i++) {
+        bool sel = (i == haUiCursor);
+        if(sel) g->fillRect(0, y - 2, HA_UI_W, 13, TFT_BLUE);
+        g->setTextColor(TFT_WHITE, sel ? TFT_BLUE : TFT_BLACK);
+        char buf[40];
+        snprintf(buf, sizeof(buf), "%.38s", items[i]);
+        g->drawString(buf, 4, y);
+        y += 16;
+    }
+    haUiFooter(g, ";/. move   ENTER change   ESC back");
 }
 
 static void haUiDrawConsole(lgfx::LovyanGFX* g) {
@@ -269,6 +360,9 @@ static void haUiDraw() {
     case HA_VIEW_SSID:
         haUiDrawSsid(g);
         break;
+    case HA_VIEW_SETTINGS:
+        haUiDrawSettings(g);
+        break;
     default:
         haUiDrawDash(g);
         break;
@@ -286,16 +380,26 @@ static void haUiOpen(HaUiView v) {
     haUiCursor = 0;
     haUiScroll = 0;
     if(v == HA_VIEW_GAMES) {
+        haUiComputeGamesOrder(); // cursor is a position in the sorted display order
         for(int i = 0; i < HA_UI_GAME_COUNT; i++)
-            if(HA_UI_GAMES[i].id == haUiSnap.activeGame) haUiCursor = i;
+            if(HA_UI_GAMES[haGamesOrder[i]].id == haUiSnap.activeGame) haUiCursor = i;
     }
     haUiForce = true;
 }
 
+// ESC/back: SSID and the event log are reached from Settings, so they return there;
+// everything else returns to the dashboard.
+static void haUiBack() {
+    if(haUiView == HA_VIEW_SSID || haUiView == HA_VIEW_CONSOLE)
+        haUiOpen(HA_VIEW_SETTINGS);
+    else
+        haUiOpen(HA_VIEW_DASH);
+}
+
 static void haUiChar(char c) {
     if(haUiView == HA_VIEW_SSID) {
-        if(c == '`') { // esc
-            haUiOpen(HA_VIEW_DASH);
+        if(c == '`') { // esc -> back to settings
+            haUiBack();
             return;
         }
         size_t n = strlen(haUiEdit);
@@ -309,14 +413,25 @@ static void haUiChar(char c) {
 
     switch(c) {
     case '`': // esc
-        haUiOpen(HA_VIEW_DASH);
+        haUiBack();
         return;
     case ';': // up
         if(haUiView == HA_VIEW_GAMES && haUiCursor > 0) haUiCursor--;
+        else if(haUiView == HA_VIEW_SETTINGS && haUiCursor > 0) haUiCursor--;
         haUiForce = true;
         return;
     case '.': // down
         if(haUiView == HA_VIEW_GAMES && haUiCursor < HA_UI_GAME_COUNT - 1) haUiCursor++;
+        else if(haUiView == HA_VIEW_SETTINGS && haUiCursor < HA_SET_COUNT - 1) haUiCursor++;
+        haUiForce = true;
+        return;
+    case ',': // left = page up (whole screen)
+        if(haUiView == HA_VIEW_GAMES) haUiCursor = haUiCursor > 6 ? haUiCursor - 6 : 0;
+        haUiForce = true;
+        return;
+    case '/': // right = page down
+        if(haUiView == HA_VIEW_GAMES)
+            haUiCursor = haUiCursor + 6 < HA_UI_GAME_COUNT ? haUiCursor + 6 : HA_UI_GAME_COUNT - 1;
         haUiForce = true;
         return;
     case 'g':
@@ -327,28 +442,25 @@ static void haUiChar(char c) {
     case 'L':
         haUiOpen(HA_VIEW_BOARD);
         return;
-    case 'c':
-    case 'C':
-        haUiOpen(HA_VIEW_CONSOLE);
+    case 's':
+    case 'S':
+        if(haUiView == HA_VIEW_GAMES) { // in the picker, S toggles the sort order
+            haGameSort ^= 1;
+            haUiCursor = 0;
+            haUiScroll = 0;
+        } else {
+            haUiOpen(HA_VIEW_SETTINGS);
+        }
+        haUiForce = true;
         return;
     case 'r':
     case 'R':
-        haHostResetScores();
+        if(haUiView == HA_VIEW_BOARD) haHostResetScores(); // reset lives on the board
         haUiForce = true;
         return;
     case 'e':
     case 'E':
         haHostRoundEnd();
-        haUiForce = true;
-        return;
-    case 'n':
-    case 'N':
-        strlcpy(haUiEdit, haHostSsid(), sizeof(haUiEdit));
-        haUiOpen(HA_VIEW_SSID);
-        return;
-    case 'p':
-    case 'P':
-        haHostTogglePortal();
         haUiForce = true;
         return;
     default:
@@ -358,11 +470,29 @@ static void haUiChar(char c) {
 
 static void haUiEnter() {
     if(haUiView == HA_VIEW_GAMES) {
-        haHostSelectGame(HA_UI_GAMES[haUiCursor].id);
+        const HaGameItem& it = HA_UI_GAMES[haGamesOrder[haUiCursor]];
+        if(it.id != HA_GAME_NONE) haGamePlays[it.id]++; // rough play tally for "most played"
+        haHostSelectGame(it.id);
         haUiOpen(HA_VIEW_DASH);
     } else if(haUiView == HA_VIEW_SSID) {
         if(haUiEdit[0]) haHostApplySsid(haUiEdit);
-        haUiOpen(HA_VIEW_DASH);
+        haUiOpen(HA_VIEW_SETTINGS); // back to settings, where SSID lives
+    } else if(haUiView == HA_VIEW_SETTINGS) {
+        switch(haUiCursor) {
+        case 0: // SSID -> open the editor
+            strlcpy(haUiEdit, haHostSsid(), sizeof(haUiEdit));
+            haUiView = HA_VIEW_SSID;
+            break;
+        case 1: // Audio -> cycle off/low/high
+            haAudioLevel = (uint8_t)((haAudioLevel + 1) % 3);
+            break;
+        case 2: // AP -> toggle
+            haHostTogglePortal();
+            break;
+        case 3: // Event log
+            haUiView = HA_VIEW_CONSOLE;
+            break;
+        }
     }
     haUiForce = true;
 }
@@ -372,7 +502,7 @@ static void haUiDel() {
         size_t n = strlen(haUiEdit);
         if(n) haUiEdit[n - 1] = '\0';
     } else {
-        haUiOpen(HA_VIEW_DASH);
+        haUiBack();
     }
     haUiForce = true;
 }

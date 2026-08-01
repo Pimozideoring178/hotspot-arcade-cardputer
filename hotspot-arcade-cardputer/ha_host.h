@@ -54,8 +54,10 @@ static inline void haHostReset() {
 
 // A re-join for a known pid is a rename (the phone's header editor), exactly as
 // player_join() treats it on the Flipper: update the nick, keep the score.
-static inline void haHostJoin(uint8_t pid, const char* nick) {
-    if(pid < 1 || pid > HA_MAX_PLAYERS) return;
+// Returns true only for a genuinely new player (not a mid-game rename), so the
+// caller can jingle on joins but not on nick edits.
+static inline bool haHostJoin(uint8_t pid, const char* nick) {
+    if(pid < 1 || pid > HA_MAX_PLAYERS) return false;
     bool isNew = !haHost.p[pid].used;
     haHost.p[pid].used = true;
     strlcpy(haHost.p[pid].nick, nick, HA_NICK_LEN);
@@ -63,6 +65,7 @@ static inline void haHostJoin(uint8_t pid, const char* nick) {
     char line[HA_EV_LEN];
     snprintf(line, sizeof(line), "%s %s", isNew ? "JOIN" : "NAME", nick);
     haHostLog(line);
+    return isNew;
 }
 
 static inline void haHostLeave(uint8_t pid) {
