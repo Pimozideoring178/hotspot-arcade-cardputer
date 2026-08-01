@@ -60,16 +60,10 @@ jobs:
           files: |
             build/hotspot-arcade-cardputer.ino.bin
             build/hotspot-arcade-cardputer.full.bin
-          body: |
-            **Keep M5Launcher** — flash the app image to `0x170000`:
-            ```
-            esptool --chip esp32s3 --port <PORT> --baud 921600 write_flash 0x170000 hotspot-arcade-cardputer.ino.bin
-            ```
-            **Full install** — replaces everything, launcher included:
-            ```
-            esptool --chip esp32s3 --port <PORT> --baud 921600 write_flash 0x0 hotspot-arcade-cardputer.full.bin
-            ```
-            Cardputer v1 (StampS3, 8MB). See the README for the difference and for recovery.
+          # Release notes come from a repo file, so they're version-controlled and a
+          # workflow re-run can never clobber hand-written notes. Edit
+          # docs/RELEASE_NOTES.md and commit it before tagging the next release.
+          body_path: docs/RELEASE_NOTES.md
 
       # Push the release to M5Burner too, which mirrors into LauncherHub. Runs only
       # when the two secrets are set (add them under Settings -> Secrets -> Actions):
