@@ -33,6 +33,7 @@ static const HaGameItem HA_UI_GAMES[] = {
     {HA_GAME_WYR, "Would You Rather", "Group vote, A or B", false},
     {HA_GAME_SCRAMBLE, "Word Scramble", "Unscramble the word", false},
     {HA_GAME_SPECTRUM, "Spectrum", "Give a clue, dial to guess", false},
+    {HA_GAME_KMK, "Kiss Marry Kill", "Predict a player's picks", false},
     {HA_GAME_REACT, "Reaction Duel", "Tap on green, fastest wins", false},
     {HA_GAME_CONNECT4, "Connect Four", "Four in a row", true},
     {HA_GAME_TICTACTOE, "Tic-Tac-Toe", "Three in a row", true},
@@ -76,6 +77,7 @@ static char haUiEdit[33] = "";
 static uint8_t haGameSort = 0;       // game picker order: 0 alphabetical, 1 most played
 static uint16_t haGamePlays[16] = {}; // rough per-game play count (indexed by game id)
 static int haGamesOrder[HA_UI_GAME_COUNT]; // display order, filled per sort mode
+static int haHistIdx = 0;            // leaderboard/history: 0 = newest loaded session
 static HaHost haUiSnap; // draw source; never touched by the async task
 static uint32_t haUiDrawnRev = 0xFFFFFFFF;
 static uint32_t haUiLastDraw = 0;
@@ -266,6 +268,9 @@ static void haUiDrawGames(lgfx::LovyanGFX* g) {
     haUiFooter(g, ";/. move  S sort  ENTER pick  ESC back");
 }
 
+// The Leaderboard always shows the current session's live standings (they're
+// auto-saved to the SD card when this screen is opened, so they survive a restart).
+// R clears the scores to start a new session.
 static void haUiDrawBoard(lgfx::LovyanGFX* g) {
     haUiHeader(g, "LEADERBOARD");
     uint8_t order[HA_MAX_PLAYERS + 1];
@@ -276,7 +281,7 @@ static void haUiDrawBoard(lgfx::LovyanGFX* g) {
     } else {
         haUiDrawScoreCols(g, order, n, 16, 5); // same 2 columns x 5 as the dashboard
     }
-    haUiFooter(g, "R reset scores   ESC back");
+    haUiFooter(g, haSdOk ? "R reset scores   ESC back" : "no SD   R reset   ESC back");
 }
 
 static const char* haUiAudioName() {
@@ -383,6 +388,8 @@ static void haUiOpen(HaUiView v) {
         haUiComputeGamesOrder(); // cursor is a position in the sorted display order
         for(int i = 0; i < HA_UI_GAME_COUNT; i++)
             if(HA_UI_GAMES[haGamesOrder[i]].id == haUiSnap.activeGame) haUiCursor = i;
+    } else if(v == HA_VIEW_BOARD) {
+        haHistSaveCurrent(); // persist the current standings whenever the board is opened
     }
     haUiForce = true;
 }

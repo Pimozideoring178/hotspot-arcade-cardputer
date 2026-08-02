@@ -1,13 +1,8 @@
-### v0.3.0 — host UI overhaul + audio
+### v0.4.0 — new game: Kiss Marry Kill + always-on leaderboard
 
-- **Live 2-column scoreboard** on the main screen — all 10 players at once, ranked, leader in gold
-- **Settings screen** (`S`): rename the AP, audio off/low/high, AP on/off, event log
-- 🔊 **speaker jingles** when the AP comes up and when players join or leave
-- **Game picker**: sort A–Z or by most-played (`S`), `1v1` tags, one-line blurbs, page with `,`/`/`
-- Reset scores moved to the **Leaderboard** (`L`)
-- **Up to 10 phones** (the ESP32-S3 softAP hardware maximum)
-
-Same 13 games as v0.2.
+- 🎭 **New party game: Kiss Marry Kill** — one player secretly tags three (in)famous people **Kiss / Marry / Kill**; everyone else predicts how they tagged them. Read someone right and you score; being *readable* pays off too. Lobby pack-vote, four name packs (historical, fiction, famous, mix). **14 games now.**
+- 🏆 **Leaderboard reworked** — it now **always** shows the current live standings (no more "no session"), and **auto-saves to the SD card** the moment you open it. The manual "save session" is gone — your results are simply always there.
+- 💾 Scores are also written to SD **when a player drops out**, so a mid-game roster change never loses the standings.
 
 ### Install
 

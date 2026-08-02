@@ -50,6 +50,7 @@ const GAMES = [
   ['scramble', 'HA_GAME_SCRAMBLE'],
   ['draw', 'HA_GAME_DRAW'],
   ['spectrum', 'HA_GAME_SPECTRUM'],
+  ['kmk', 'HA_GAME_KMK'],
 ];
 const MAX_PER_GAME = 6;
 

@@ -20,6 +20,8 @@
 #include <DNSServer.h>
 #include <esp_wifi.h>
 #include <esp_ota_ops.h>
+#include <SD.h>
+#include <SPI.h>
 #include <M5Cardputer.h>
 
 #include "ha_proto.h"
@@ -27,6 +29,7 @@
 #include "ha_bundle.h"
 #include "ha_games.h"
 #include "ha_host.h"
+#include "ha_history.h"
 #include "ha_content.h"
 #include "ha_ui.h"
 
@@ -289,10 +292,27 @@ void haHostSnapshot(HaHost& dst) {
 
 // ---------------- Arduino entry ----------------
 
+// Cardputer v1 microSD is on its own SPI bus: SCK=40, MISO=39, MOSI=14, CS=12.
+// This is separate from the display bus, so mounting it here doesn't disturb the UI.
+static SPIClass haSdSpi(FSPI);
+bool haSdOk = false; // non-static: ha_history.h reads it via `extern`
+static void haSdBegin() {
+    haSdSpi.begin(40, 39, 14, 12);
+    haSdOk = SD.begin(12, haSdSpi, 20000000);
+    if(haSdOk)
+        Serial.printf(
+            "[ha] SD ok: %lluMB, type %d\n",
+            SD.cardSize() / (1024ULL * 1024ULL),
+            (int)SD.cardType());
+    else
+        Serial.println("[ha] SD: no card or mount failed");
+}
+
 void setup() {
     auto cfg = M5.config();
     M5Cardputer.begin(cfg, true);
     Serial.begin(115200);
+    haSdBegin();
 
     // M5Launcher installs apps with the ESP-IDF OTA rollback flag set: an app that
     // boots but never confirms itself gets rolled back to the launcher on the next
